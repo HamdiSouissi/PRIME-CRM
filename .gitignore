@@ -1,0 +1,77 @@
+# Environnement
+.env
+.env.local
+.env.production
+.venv
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+*.local
+.next
+.nuxt
+.output
+.parcel-cache
+.turbo
+.cache/
+
+# Docker volumes (ne pas versionner les dumps)
+pgdata/
+redisdata/
+uploads/
+backend/uploads/
+backend/prime_crm.db
+*.db
+*.sqlite
+*.dump
+*.sql.gz
+
+# Secrets
+secrets/
+*.pem
+*.key
+*.crt
+
+# IA - poids modèles (volumineux) — ne pas ignorer backend/app/models
+/models/
+/ollama_models/
+ollama_models/
+*.bin
+*.gguf
+*.safetensors
+!backend/app/models/
+!backend/app/models/**
+
+# OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build
+build/
+out/
+coverage/
+playwright-report/
+test-results/
