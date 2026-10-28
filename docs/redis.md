@@ -24,6 +24,11 @@ sécurité.**
   peuvent encore utiliser le tableau de bord, qui reprend les données PostgreSQL.
   `/health` est une vérification de présence de l'API, **pas** une vérification
   continue de Redis ou de son quota.
+- Sur le service hébergé, laisser **Eviction désactivé**. Redis contient aussi
+  les compteurs de connexion : une suppression prématurée affaiblirait la
+  limitation. L'application ne vérifie pas ce réglage au démarrage. Si le
+  stockage est plein, les écritures peuvent être refusées et les nouvelles
+  connexions bloquées jusqu'au rétablissement du service.
 - En développement, `REDIS_URL` peut être absent pour travailler sans Redis ;
   le cache et la limitation sont alors désactivés. Le Compose de développement
   lance Redis par défaut et lui relie le backend. Le Compose de production
@@ -76,8 +81,11 @@ mais le [chiffrement du stockage au repos](https://upstash.com/docs/redis/featur
 est une option payante, non comprise dans l'offre gratuite. Le chiffrement
 applicatif ci-dessus réduit l'exposition du cache, sans masquer les métadonnées
 ni les compteurs pseudonymisés. Ne pas ajouter de carte : Upstash indique que
-cela convertit les ressources gratuites en offres payantes. Vérifier les
-conditions avant toute création : tarifs et limites peuvent changer.
+cela convertit les ressources gratuites en offres payantes. Laisser également
+[Auto Upgrade désactivé](https://upstash.com/docs/redis/features/auto-upgrade).
+Les bases Free peuvent être [archivées après au moins 30 jours d'inactivité](https://upstash.com/docs/redis/help/faq) ;
+vérifier leur disponibilité avant une connexion ou un déploiement ultérieur.
+Vérifier les conditions avant toute création : tarifs et limites peuvent changer.
 
 ## Tests
 
