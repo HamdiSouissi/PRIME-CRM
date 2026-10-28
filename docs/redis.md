@@ -104,7 +104,10 @@ ni `SCAN`. Ce test ne vérifie pas la connexion HTTP, le frontend ou le cycle
 de déploiement. Les erreurs sont volontairement résumées sans URL ni secrets.
 
 Dans la console Upstash, ouvrez votre base, puis **Connect → TCP** et copiez
-l'URL commençant par `rediss://`. N'utilisez pas l'URL REST en `https://`.
+l'URL commençant par `rediss://`. Décochez **Read-Only Token** si cette option
+est visible : le test doit pouvoir écrire ses clés temporaires. N'utilisez pas
+l'URL REST en `https://`. Le test accepte uniquement un hôte `*.upstash.io`,
+sans paramètres de requête ou fragment.
 Depuis la racine du dépôt, avec les dépendances backend installées :
 
 ```powershell
