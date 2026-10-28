@@ -7,7 +7,7 @@ from ..database import get_db
 from ..models.user import User
 from ..models.company import Company
 from ..models.stage import PipelineStage
-from ..core.security import verify_password, get_password_hash, create_access_token
+from ..core.security import verify_password, get_password_hash, create_access_token, is_acceptable_new_password
 from ..core.permissions import get_current_user
 from ..config import settings
 from ..schemas.auth import LoginRequest, TokenResponse, UserResponse, RegisterRequest
@@ -102,6 +102,10 @@ def login_json(payload: LoginRequest, db: Session = Depends(get_db)):
 
 @router.post("/register", response_model=TokenResponse)
 def register(payload: RegisterRequest, db: Session = Depends(get_db)):
+    if not settings.ALLOW_PUBLIC_REGISTRATION:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Les inscriptions publiques sont désactivées")
+    if not is_acceptable_new_password(payload.password):
+        raise HTTPException(status_code=400, detail="Mot de passe : au moins 16 caractères, au plus 72 octets, sans espaces aux extrémités")
     existing = db.query(User).filter(User.email == payload.email).first()
     if existing:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Un compte avec cet email existe déjà")
@@ -164,32 +168,3 @@ def get_me(current_user: User = Depends(get_current_user), db: Session = Depends
         "phone": current_user.phone,
         "created_at": current_user.created_at
     }
-
-@router.post("/seed-admin")
-def seed_admin(db: Session = Depends(get_db)):
-    """Crée le premier administrateur si aucun utilisateur n'existe. Sécurisé: uniquement si DB vide."""
-    count = db.query(User).count()
-    if count > 0:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Des utilisateurs existent déjà")
-    
-    company = Company(
-        name=settings.FIRST_SUPERUSER_COMPANY,
-        slug="prime-vision-solutions",
-        email=settings.FIRST_SUPERUSER_EMAIL
-    )
-    db.add(company)
-    db.flush()
-    
-    user = User(
-        email=settings.FIRST_SUPERUSER_EMAIL,
-        hashed_password=get_password_hash(settings.FIRST_SUPERUSER_PASSWORD),
-        first_name="Admin",
-        last_name="Prime",
-        role="admin",
-        is_superuser=True,
-        company_id=company.id
-    )
-    db.add(user)
-    db.commit()
-    ensure_default_stages(db, company.id)
-    return {"message": "Administrateur créé", "email": user.email, "company": company.name}

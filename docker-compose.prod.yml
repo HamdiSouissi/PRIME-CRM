@@ -4,8 +4,8 @@ services:
     image: postgres:16-alpine
     restart: always
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in the environment}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the environment}
       POSTGRES_DB: ${POSTGRES_DB:-primecrm}
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -24,11 +24,14 @@ services:
       db:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-primecrm}
-      SECRET_KEY: ${SECRET_KEY}
-      FIRST_SUPERUSER_EMAIL: ${FIRST_SUPERUSER_EMAIL}
-      FIRST_SUPERUSER_PASSWORD: ${FIRST_SUPERUSER_PASSWORD}
-      CORS_ORIGINS: ${CORS_ORIGINS}
+      APP_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:?Set POSTGRES_USER in the environment}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the environment}@db:5432/${POSTGRES_DB:-primecrm}
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in the environment}
+      FIRST_SUPERUSER_EMAIL: ${FIRST_SUPERUSER_EMAIL:-}
+      FIRST_SUPERUSER_PASSWORD: ${FIRST_SUPERUSER_PASSWORD:-}
+      FIRST_COMPANY_NAME: ${FIRST_COMPANY_NAME:-Prime Vision Solutions}
+      ALLOW_PUBLIC_REGISTRATION: "false"
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
     volumes:
       - backend_uploads:/app/uploads
     extra_hosts:
@@ -40,7 +43,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2"
+    command: sh -c "alembic upgrade head && python -m app.bootstrap && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2"
 
   frontend:
     build: ./frontend

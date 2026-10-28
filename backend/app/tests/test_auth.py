@@ -33,7 +33,7 @@ def test_register_and_login():
     # Register new company/admin
     resp = client.post("/api/v1/auth/register", json={
         "email": "test@prime.tn",
-        "password": "Test123!Test",
+        "password": "test-only-secure-password-123",
         "first_name": "Test",
         "last_name": "User",
         "company_name": "Test Company"
@@ -49,18 +49,18 @@ def test_register_and_login():
     assert resp.json()["email"] == "test@prime.tn"
     
     # Login json
-    resp = client.post("/api/v1/auth/login-json", json={"email": "test@prime.tn", "password": "Test123!Test"})
+    resp = client.post("/api/v1/auth/login-json", json={"email": "test@prime.tn", "password": "test-only-secure-password-123"})
     assert resp.status_code == 200
     assert resp.json()["access_token"]
 
 def test_company_isolation():
     # Create second company
     resp1 = client.post("/api/v1/auth/register", json={
-        "email": "alice@societe-a.tn", "password": "Test123!Test", "first_name": "Alice", "last_name": "A", "company_name": "Societe A"
+        "email": "alice@societe-a.tn", "password": "test-only-secure-password-123", "first_name": "Alice", "last_name": "A", "company_name": "Societe A"
     })
     token_a = resp1.json()["access_token"]
     resp2 = client.post("/api/v1/auth/register", json={
-        "email": "bob@societe-b.tn", "password": "Test123!Test", "first_name": "Bob", "last_name": "B", "company_name": "Societe B"
+        "email": "bob@societe-b.tn", "password": "test-only-secure-password-123", "first_name": "Bob", "last_name": "B", "company_name": "Societe B"
     })
     token_b = resp2.json()["access_token"]
     

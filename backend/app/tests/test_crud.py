@@ -22,7 +22,7 @@ client = TestClient(app)
 def get_token():
     import uuid
     email = f"u{uuid.uuid4().hex[:6]}@test.tn"
-    resp = client.post("/api/v1/auth/register", json={"email": email, "password": "Test123!Test", "first_name": "U", "last_name": "Test", "company_name": f"C {email}"})
+    resp = client.post("/api/v1/auth/register", json={"email": email, "password": "test-only-secure-password-123", "first_name": "U", "last_name": "Test", "company_name": f"C {email}"})
     assert resp.status_code == 200, resp.text
     return resp.json()["access_token"]
 

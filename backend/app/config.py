@@ -1,53 +1,116 @@
-from pydantic_settings import BaseSettings
-from typing import Optional
-import os
 import json
+from typing import Literal
+from urllib.parse import urlsplit
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "Prime CRM"
     VERSION: str = "1.0.0"
     API_V1_STR: str = "/api/v1"
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "prime-crm-secret-key-change-in-production-please-use-long-random-string")
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
+
+    # Production is the fail-closed default; development must be explicit.
+    APP_ENV: Literal["production", "development", "test"] = "production"
+    SECRET_KEY: str = ""
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7
     ALGORITHM: str = "HS256"
-    
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./prime_crm.db")
-    # Pour PostgreSQL en prod: postgresql://user:password@db:5432/primecrm
-    
-    # IMPORTANT: gardé en str pour éviter le décodage JSON de pydantic-settings
-    # qui plante sur "http://a,http://b" (non-JSON). On expose cors_origins_list pour l'usage.
-    CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000,http://localhost:80"
+    DATABASE_URL: str = "sqlite:///./prime_crm.db"
+
+    # An empty list allows no cross-origin browser requests.
+    CORS_ORIGINS: str = ""
+    ALLOW_PUBLIC_REGISTRATION: bool = False
+
+    # Only used by the explicit first-administrator bootstrap command.
+    FIRST_SUPERUSER_EMAIL: str = ""
+    FIRST_SUPERUSER_PASSWORD: str = ""
+    FIRST_COMPANY_NAME: str = "Prime Vision Solutions"
+
+    UPLOAD_DIR: str = "./uploads"
+    MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024
+    DEFAULT_PAGE_SIZE: int = 20
+    MAX_PAGE_SIZE: int = 100
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=True,
+        env_ignore_empty=True,
+        extra="ignore",
+    )
 
     @property
     def cors_origins_list(self) -> list[str]:
-        v = self.CORS_ORIGINS
-        if isinstance(v, str):
-            v = v.strip()
-            if v.startswith("["):
-                try:
-                    parsed = json.loads(v)
-                    if isinstance(parsed, list):
-                        return [str(s).strip() for s in parsed if str(s).strip()]
-                except:
-                    pass
-            return [s.strip() for s in v.split(",") if s.strip()]
-        return v if isinstance(v, list) else []
-    
-    # First admin creation
-    FIRST_SUPERUSER_EMAIL: str = os.getenv("FIRST_SUPERUSER_EMAIL", "admin@primevisionsolutions.tn")
-    FIRST_SUPERUSER_PASSWORD: str = os.getenv("FIRST_SUPERUSER_PASSWORD", "Admin123!")
-    FIRST_SUPERUSER_COMPANY: str = os.getenv("FIRST_COMPANY_NAME", "Prime Vision Solutions")
-    
-    # Uploads
-    UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", "./uploads")
-    MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024  # 10MB
-    
-    # Pagination
-    DEFAULT_PAGE_SIZE: int = 20
-    MAX_PAGE_SIZE: int = 100
-    
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
+        value = self.CORS_ORIGINS.strip()
+        if not value:
+            return []
+        if value.startswith("["):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError as exc:
+                raise ValueError("CORS_ORIGINS must be a list or comma-separated origins") from exc
+            if not isinstance(parsed, list) or any(not isinstance(item, str) for item in parsed):
+                raise ValueError("CORS_ORIGINS must contain only origin strings")
+            return [item.strip() for item in parsed if item.strip()]
+        return [item.strip() for item in value.split(",") if item.strip()]
+
+    def validate_runtime(self) -> None:
+        """Validate the web app/bootstrap configuration without printing values.
+
+        Alembic may import these settings with only DATABASE_URL configured;
+        runtime validation is therefore called by the app and bootstrap, not
+        while the settings module is imported by the migration environment.
+        """
+        known_unsafe_keys = {
+            "prime-crm-secret-key-change-in-production-please-use-long-random-string",
+            "please_generate_a_long_random_secret_key_here_min_32_chars",
+        }
+        if (
+            len(self.SECRET_KEY) < 32
+            or len(set(self.SECRET_KEY)) < 8
+            or self.SECRET_KEY != self.SECRET_KEY.strip()
+            or self.SECRET_KEY in known_unsafe_keys
+        ):
+            raise ValueError("SECRET_KEY must be a unique, randomly generated value of at least 32 characters")
+        if self.ALGORITHM != "HS256":
+            raise ValueError("Only the configured HS256 token algorithm is supported")
+
+        if self.APP_ENV == "production":
+            from sqlalchemy.engine import make_url
+
+            try:
+                database_url = make_url(self.DATABASE_URL)
+                valid_database = (
+                    database_url.drivername in {"postgresql", "postgresql+psycopg2"}
+                    and bool(database_url.host)
+                    and bool(database_url.database)
+                )
+            except Exception:
+                valid_database = False
+            if not valid_database:
+                raise ValueError("Production requires a valid PostgreSQL DATABASE_URL with host and database") from None
+            if self.ALLOW_PUBLIC_REGISTRATION:
+                raise ValueError("Public registration is disabled in production")
+
+        for origin in self.cors_origins_list:
+            try:
+                parsed = urlsplit(origin)
+                # Accessing port also validates malformed ports.
+                parsed.port
+                valid = (
+                    parsed.scheme in {"http", "https"}
+                    and bool(parsed.hostname)
+                    and parsed.username is None
+                    and parsed.password is None
+                    and not parsed.path
+                    and not parsed.query
+                    and not parsed.fragment
+                    and "*" not in origin
+                    and not any(char.isspace() for char in origin)
+                )
+            except ValueError:
+                valid = False
+            if not valid or (self.APP_ENV == "production" and parsed.scheme != "https"):
+                raise ValueError("CORS_ORIGINS must contain explicit, valid origins (HTTPS in production)")
+
 
 settings = Settings()

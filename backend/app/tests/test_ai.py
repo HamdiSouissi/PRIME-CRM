@@ -22,7 +22,7 @@ client = TestClient(app)
 def get_token():
     import uuid
     email = f"ai{uuid.uuid4().hex[:6]}@test.tn"
-    resp = client.post("/api/v1/auth/register", json={"email": email, "password": "Test123!Test", "first_name": "AI", "last_name": "Test", "company_name": f"AI Corp {email}"})
+    resp = client.post("/api/v1/auth/register", json={"email": email, "password": "test-only-secure-password-123", "first_name": "AI", "last_name": "Test", "company_name": f"AI Corp {email}"})
     return resp.json()["access_token"]
 
 def test_ai_provider_crud():

@@ -6,6 +6,15 @@ from ..config import settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+
+def is_acceptable_new_password(password: str) -> bool:
+    """Reject weak/ambiguous inputs and bcrypt's silent 72-byte truncation."""
+    try:
+        return len(password) >= 16 and len(password.encode("utf-8")) <= 72 and password == password.strip()
+    except UnicodeEncodeError:
+        return False
+
+
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
 

@@ -11,11 +11,15 @@ if settings.DATABASE_URL.startswith("sqlite"):
     if ":memory:" in settings.DATABASE_URL:
         engine_kwargs["poolclass"] = StaticPool
 
-engine = create_engine(
-    settings.DATABASE_URL,
-    connect_args=connect_args,
-    **engine_kwargs
-)
+try:
+    engine = create_engine(
+        settings.DATABASE_URL,
+        connect_args=connect_args,
+        **engine_kwargs
+    )
+except Exception:
+    # Invalid URLs can contain credentials; never include them in startup errors.
+    raise RuntimeError("DATABASE_URL invalide ou pilote de base indisponible") from None
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
@@ -26,7 +30,3 @@ def get_db():
         yield db
     finally:
         db.close()
-
-def init_db():
-    from .models import company, user, client, contact, opportunity, stage, activity, product, quote, audit, automation, ai_provider
-    Base.metadata.create_all(bind=engine)

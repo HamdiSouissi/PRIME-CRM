@@ -27,8 +27,8 @@ export function Admin() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card><CardHeader><CardTitle className="text-sm">Santé système</CardTitle></CardHeader><CardContent className="text-xs space-y-1"><div>API: {health?.status || 'ok'} • Version: {health?.version || '1.0.0'}</div><div>Base: {health?.database || 'ok'}</div><div>Heure: {health?.timestamp || new Date().toISOString()}</div><div className="mt-2 p-2 bg-slate-50 dark:bg-slate-900 rounded">Docker: frontend (80) + backend (8000) + db (5432) + redis (optionnel) • Volumes persistants • Healthchecks • Réseau interne prime-net</div></CardContent></Card>
-        <Card><CardHeader><CardTitle className="text-sm">Sauvegardes & Restauration (testée)</CardTitle></CardHeader><CardContent className="space-y-2 text-sm">
+        <Card><CardHeader><CardTitle className="text-sm">Santé système</CardTitle></CardHeader><CardContent className="text-xs space-y-1"><div>API: {health?.status || 'ok'} • Version: {health?.version || '1.0.0'}</div><div>Base: {health?.database || 'ok'}</div><div>Heure: {health?.timestamp || new Date().toISOString()}</div><div className="mt-2 p-2 bg-slate-50 dark:bg-slate-900 rounded">Redis reste à intégrer avant le premier déploiement public. Les volumes locaux Docker ne constituent pas une sauvegarde.</div></CardContent></Card>
+        <Card><CardHeader><CardTitle className="text-sm">Sauvegardes & Restauration</CardTitle></CardHeader><CardContent className="space-y-2 text-sm">
           <div className="flex gap-2"><a href={`${api.defaults.baseURL}/admin/backup`}><Button size="sm">Télécharger JSON</Button></a><Button size="sm" variant="outline" onClick={async()=>{ 
             const r=await api.get('/admin/backup'); 
             const blob=new Blob([JSON.stringify(r.data,null,2)],{type:'application/json'}); 
@@ -39,7 +39,7 @@ export function Admin() {
             a.download='backup-'+dateStr+'.json'; 
             a.click();
           }}>Exporter</Button></div>
-          <p className="text-xs text-muted-foreground">Procédure: docker compose exec db pg_dump -U prime primecrm - backup.sql • Restauration: psql -U prime primecrm - backup.sql + alembic upgrade head (testé).</p>
+          <p className="text-xs text-muted-foreground">La procédure de sauvegarde et de restauration doit être validée sur une base de test avant la mise en ligne.</p>
         </CardContent></Card>
       </div>
 
@@ -49,7 +49,7 @@ export function Admin() {
         <div className="text-xs text-muted-foreground mt-2">Journalisation: create/update/delete/login/export/merge/stage_change • Conservation & suppression configurables • Accès non autorisé bloqué (tests d'isolation).</div>
       </CardContent></Card>
 
-      <Card className="bg-amber-50 dark:bg-amber-950/20 border-amber-200"><CardContent className="pt-4 text-xs">Sécurité: authentification JWT + bcrypt, permissions vérifiées serveur, séparation données par company_id, validation stricte entrées, protection SQLi/XSS/CSRF, limitation tentatives, stockage sécurisé clés API (masquées), HTTPS en prod, pas d'exposition secrets dans logs/erreurs/git. Voir docs/security.md</CardContent></Card>
+      <Card className="bg-amber-50 dark:bg-amber-950/20 border-amber-200"><CardContent className="pt-4 text-xs">Sécurité : accès privé et authentification par mot de passe. La limitation des tentatives, la protection des clés IA et l'intégration Redis restent à finaliser avant toute exposition publique. Voir docs/security.md.</CardContent></Card>
     </div>
   )
 }

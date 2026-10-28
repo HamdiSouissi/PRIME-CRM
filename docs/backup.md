@@ -1,16 +1,13 @@
-# Sauvegarde & Restauration — Testée
+# Sauvegarde et restauration : à valider
 
-## Sauvegarde
-```bash
-docker compose exec db pg_dump -U prime primecrm > backup.sql
-curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/admin/backup -o backup.json
-```
+Aucune procédure de sauvegarde ou de restauration n'a été validée dans le cadre
+de la préparation du déploiement. Les volumes Docker ne constituent pas une
+sauvegarde et l'export JSON de l'API ne contient qu'une partie des données.
 
-## Restauration
-```bash
-cat backup.sql | docker compose exec -T db psql -U prime primecrm
-docker compose exec backend alembic upgrade head
-curl http://localhost:8000/health  # vérifier
-```
+Avant le premier déploiement, définir une stratégie adaptée à la base hébergée,
+protéger et conserver les sauvegardes hors du dépôt, puis tester une
+restauration complète sur une base jetable distincte. Ne jamais restaurer ni
+exécuter une migration sur une base réelle sans avoir vérifié et confirmé sa
+cible. Les commandes de restauration peuvent écraser des données.
 
-Testé sur base vierge : OK.
+Ne commiter ni dump, ni fichier `.env`, ni URL contenant un mot de passe.

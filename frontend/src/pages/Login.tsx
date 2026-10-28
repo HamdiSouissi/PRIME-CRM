@@ -7,13 +7,9 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../co
 import { toast } from 'sonner'
 
 export function Login() {
-  const [email, setEmail] = useState('admin@primevisionsolutions.tn')
-  const [password, setPassword] = useState('Admin123!')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
-  const [mode, setMode] = useState<'login'|'register'>('login')
-  const [firstName, setFirstName] = useState('')
-  const [lastName, setLastName] = useState('')
-  const [companyName, setCompanyName] = useState('')
   const navigate = useNavigate()
 
   const doLogin = async (e: React.FormEvent) => {
@@ -30,33 +26,8 @@ export function Login() {
     } finally { setLoading(false) }
   }
 
-  const doRegister = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoading(true)
-    try {
-      const res = await api.post('/auth/register', { email, password, first_name: firstName, last_name: lastName, company_name: companyName })
-      setAuthToken(res.data.access_token)
-      localStorage.setItem('prime_user', JSON.stringify(res.data.user))
-      toast.success('Compte créé avec succès !')
-      navigate('/')
-    } catch (err: any) {
-      toast.error(err.response?.data?.detail || 'Erreur inscription')
-    } finally { setLoading(false) }
-  }
-
-  const seedAdmin = async () => {
-    try {
-      const res = await api.post('/auth/seed-admin')
-      toast.success(`Admin créé: ${res.data.email}`)
-      setEmail(res.data.email)
-    } catch (err: any) {
-      toast.error(err.response?.data?.detail || 'Admin existe déjà')
-    }
-  }
-
   return (
     <div className="min-h-screen flex">
-      {/* Left branding */}
       <div className="hidden lg:flex flex-1 bg-gradient-to-br from-sky-600 via-blue-600 to-indigo-700 text-white p-12 flex-col justify-between">
         <div>
           <div className="flex items-center gap-3 mb-12">
@@ -75,40 +46,28 @@ export function Login() {
         <div className="text-sm text-blue-200">© 2026 Prime Vision Solutions — Tunis, Tunisie. Propulsé avec ❤️ pour les entrepreneurs tunisiens et français.</div>
       </div>
 
-      {/* Right form */}
       <div className="flex-1 flex items-center justify-center p-6 bg-slate-50 dark:bg-slate-950">
         <Card className="w-full max-w-md shadow-xl">
           <CardHeader className="space-y-1">
-            <CardTitle className="text-2xl">{mode === 'login' ? 'Connexion à Prime CRM' : 'Créer votre espace'}</CardTitle>
-            <CardDescription>{mode === 'login' ? 'Accédez à votre espace commercial' : 'Démarrage en 30 secondes, sans carte bancaire'}</CardDescription>
+            <CardTitle className="text-2xl">Connexion à Prime CRM</CardTitle>
+            <CardDescription>Accédez à votre espace commercial privé</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="flex gap-2 mb-6">
-              <button onClick={() => setMode('login')} className={`flex-1 py-2 rounded-lg text-sm font-medium ${mode==='login' ? 'bg-sky-500 text-white' : 'bg-slate-100 dark:bg-slate-800'}`}>Connexion</button>
-              <button onClick={() => setMode('register')} className={`flex-1 py-2 rounded-lg text-sm font-medium ${mode==='register' ? 'bg-sky-500 text-white' : 'bg-slate-100 dark:bg-slate-800'}`}>Inscription</button>
-            </div>
-
-            {mode === 'login' ? (
-              <form onSubmit={doLogin} className="space-y-4">
-                <div><Label>Email</Label><Input type="email" value={email} onChange={e=>setEmail(e.target.value)} required placeholder="admin@primevisionsolutions.tn" /></div>
-                <div><Label>Mot de passe</Label><Input type="password" value={password} onChange={e=>setPassword(e.target.value)} required /></div>
-                <Button type="submit" disabled={loading} className="w-full">{loading ? 'Connexion...' : 'Se connecter'}</Button>
-                <div className="text-xs text-center text-muted-foreground">Compte démo: admin@primevisionsolutions.tn / Admin123!</div>
-                <Button type="button" variant="outline" className="w-full text-xs" onClick={seedAdmin}>Initialiser le compte admin (1er lancement)</Button>
-              </form>
-            ) : (
-              <form onSubmit={doRegister} className="space-y-4">
-                <div className="grid grid-cols-2 gap-3"><div><Label>Prénom</Label><Input value={firstName} onChange={e=>setFirstName(e.target.value)} required /></div><div><Label>Nom</Label><Input value={lastName} onChange={e=>setLastName(e.target.value)} required /></div></div>
-                <div><Label>Nom de l'entreprise</Label><Input value={companyName} onChange={e=>setCompanyName(e.target.value)} placeholder="Ma Société" /></div>
-                <div><Label>Email</Label><Input type="email" value={email} onChange={e=>setEmail(e.target.value)} required /></div>
-                <div><Label>Mot de passe</Label><Input type="password" value={password} onChange={e=>setPassword(e.target.value)} required /></div>
-                <Button type="submit" disabled={loading} className="w-full">{loading ? 'Création...' : 'Créer mon espace Prime CRM'}</Button>
-                <p className="text-xs text-muted-foreground text-center">En vous inscrivant, vous acceptez la confidentialité stricte de vos données (séparation par entreprise).</p>
-              </form>
-            )}
+            <form onSubmit={doLogin} className="space-y-4">
+              <div>
+                <Label htmlFor="login-email">Email</Label>
+                <Input id="login-email" type="email" autoComplete="username" value={email} onChange={e=>setEmail(e.target.value)} required />
+              </div>
+              <div>
+                <Label htmlFor="login-password">Mot de passe</Label>
+                <Input id="login-password" type="password" autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)} required />
+              </div>
+              <Button type="submit" disabled={loading} className="w-full">{loading ? 'Connexion...' : 'Se connecter'}</Button>
+              <p className="text-xs text-center text-muted-foreground">Les comptes sont créés par un administrateur.</p>
+            </form>
 
             <div className="mt-6 text-center text-xs text-muted-foreground">
-              <Link to="/" className="hover:underline">Documentation</Link> • <a href="/docs" target="_blank" className="hover:underline">API Docs</a>
+              <Link to="/" className="hover:underline">Documentation</Link> • <a href="/docs" target="_blank" rel="noreferrer" className="hover:underline">API Docs</a>
             </div>
           </CardContent>
         </Card>

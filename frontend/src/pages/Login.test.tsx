@@ -36,16 +36,23 @@ function renderLogin() {
 }
 
 function fillLoginForm() {
-  fireEvent.change(screen.getByPlaceholderText('admin@primevisionsolutions.tn'), {
+  fireEvent.change(screen.getByLabelText('Email'), {
     target: { value: 'user@example.test' },
   })
-  const password = document.querySelector<HTMLInputElement>('input[type="password"]')
-  if (!password) throw new Error('Password field not found')
-  fireEvent.change(password, { target: { value: 'dummy-password' } })
+  fireEvent.change(screen.getByLabelText('Mot de passe'), { target: { value: 'dummy-password' } })
   fireEvent.click(screen.getByRole('button', { name: 'Se connecter' }))
 }
 
 describe('Login', () => {
+  it('starts with empty credentials and no public signup or bootstrap action', () => {
+    renderLogin()
+
+    expect((screen.getByLabelText('Email') as HTMLInputElement).value).toBe('')
+    expect((screen.getByLabelText('Mot de passe') as HTMLInputElement).value).toBe('')
+    expect(screen.queryByRole('button', { name: /inscription/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /initialiser/i })).toBeNull()
+  })
+
   it('stores the signed-in user and navigates after a successful login', async () => {
     const user = { id: 1, first_name: 'Test' }
     vi.mocked(api.post).mockResolvedValue({

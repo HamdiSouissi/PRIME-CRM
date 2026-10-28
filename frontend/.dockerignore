@@ -1,0 +1,14 @@
+# Do not send local dependencies, build output or secrets to the image builder.
+node_modules/
+dist/
+.env
+.env.*
+**/.env
+**/.env.*
+*.log
+backup*.sql
+backup*.json
+coverage/
+playwright-report/
+test-results/
+.git/

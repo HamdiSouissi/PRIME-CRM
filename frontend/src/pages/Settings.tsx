@@ -83,10 +83,10 @@ export function Settings() {
               <Input placeholder="Email" value={newUser.email} onChange={e=>setNewUser({...newUser, email:e.target.value})} required />
               <Input placeholder="Prénom" value={newUser.first_name} onChange={e=>setNewUser({...newUser, first_name:e.target.value})} required />
               <Input placeholder="Nom" value={newUser.last_name} onChange={e=>setNewUser({...newUser, last_name:e.target.value})} required />
-              <Input type="password" placeholder="Mot de passe" value={newUser.password} onChange={e=>setNewUser({...newUser, password:e.target.value})} required />
+              <Input type="password" minLength={16} autoComplete="new-password" placeholder="Mot de passe" value={newUser.password} onChange={e=>setNewUser({...newUser, password:e.target.value})} required />
               <div className="flex gap-1"><select value={newUser.role} onChange={e=>setNewUser({...newUser, role:e.target.value})} className="h-10 flex-1 rounded-md border px-2 text-sm"><option value="commercial">Commercial</option><option value="manager">Manager</option><option value="admin">Admin</option><option value="viewer">Lecture seule</option></select><Button type="submit">Créer</Button></div>
             </form>
-            <p className="text-xs text-muted-foreground mt-2">Rôles vérifiés côté serveur. Séparation stricte des données par entreprise.</p>
+            <p className="text-xs text-muted-foreground mt-2">Mot de passe : 16 caractères minimum, 72 octets maximum, sans espaces aux extrémités. Rôles vérifiés côté serveur.</p>
           </CardContent></Card>
           <Card><CardContent className="pt-4">
             <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="text-left text-muted-foreground"><th className="p-2">Nom</th><th>Email</th><th>Rôle</th><th>Statut</th><th>Actions</th></tr></thead><tbody>{users.map((u:any)=><tr key={u.id} className="border-t"><td className="p-2">{u.first_name} {u.last_name}</td><td>{u.email}</td><td><span className="text-xs px-1.5 py-0.5 rounded bg-slate-100">{u.role}</span></td><td>{u.is_active ? '✅ Actif' : '⏸️ Inactif'}</td><td><Button size="sm" variant="ghost" onClick={async()=>{ if(!confirm('Supprimer ?')) return; await api.delete(`/users/${u.id}`); load()}}>Supprimer</Button></td></tr>)}</tbody></table></div>

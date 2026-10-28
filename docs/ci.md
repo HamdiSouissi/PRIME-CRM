@@ -18,20 +18,27 @@ gratuits selon les conditions GitHub. Aucun service payant n'est créé.
   teste `upgrade`, la répétition de `upgrade`, `alembic check`, `downgrade
   base`, un nouvel `upgrade` et un dernier `check`. Le `downgrade` est
   destructif : **ne jamais l'exécuter sur Neon ou sur une base contenant des
-  données à conserver**.
-- **Image backend** : `docker build` vérifie le Dockerfile, sans lancer ni
-  publier l'image. Le `.dockerignore` exclut notamment les fichiers `.env` et
-  les données locales du contexte de construction.
+  données à conserver**. La CI teste ensuite l'initialisation privée de
+  l'administrateur et son idempotence sur cette même base jetable, avec des
+  valeurs temporaires générées uniquement sur le runner.
+- **Images Docker** : `docker compose config --quiet` valide les deux fichiers
+  Compose avec des valeurs fictives. Chaque job construit ensuite son image,
+  sans la publier ; un conteneur frontend jetable vérifie la configuration Nginx
+  sans exposer de port. Les fichiers `.dockerignore` excluent notamment les
+  fichiers `.env`, les données et les dépendances locales des contextes de
+  construction.
 - **Frontend, Node 24** : `npm ci` depuis le lockfile, ESLint, tests Vitest,
   vérification TypeScript et build Vite. Node 20 est en fin de vie depuis le
-  30 avril 2026 ; Node 24 est utilisé ici pour la CI. La version Node du
-  Dockerfile frontend et l'hébergement restent à décider lors du déploiement.
+  30 avril 2026 ; Node 24 est utilisé pour la CI et le Dockerfile frontend.
+  L'hébergement frontend reste à décider lors du déploiement.
 
-Les tests frontend couvrent le client d'authentification et deux scénarios de
-connexion avec API simulée ; ils ne sont pas des tests de bout en bout. Les
-tests fonctionnels backend utilisent SQLite : PostgreSQL n'est vérifié ici que
-pour les migrations. Redis n'est pas encore intégré ni testé. La CI ne remplace
-pas une revue de sécurité ni un audit des dépendances avant exposition publique.
+Les tests frontend couvrent le client d'authentification et la connexion avec
+API simulée ; ils ne sont pas des tests de bout en bout. Les tests fonctionnels
+backend utilisent SQLite : PostgreSQL est vérifié pour les migrations et le
+bootstrap privé. Les tests historiques activent l'inscription uniquement dans
+leur processus de test isolé ; elle est interdite en production. Redis n'est
+pas encore intégré ni testé. La CI ne remplace pas une revue de sécurité ni un
+audit des dépendances avant exposition publique.
 
 Ruff applique les règles de correction `E9` et `F`, mais ignore pour l'instant
 les imports et variables inutilisés (`F401`, `F841`) ; l'import `*` d'Alembic

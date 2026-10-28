@@ -72,7 +72,7 @@ jobs:
         env:
           DATABASE_URL: postgresql://ci:ci-only-password@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/primecrm_ci
         run: |
-          # Use the installed CLI: backend/alembic shadows python -m alembic.
+          # The CLI operates only on the disposable service container.
           alembic upgrade head
           alembic upgrade head
           alembic check
@@ -80,6 +80,41 @@ jobs:
           alembic downgrade base
           alembic upgrade head
           alembic check
+
+      - name: Test private bootstrap on disposable PostgreSQL
+        env:
+          APP_ENV: production
+          DATABASE_URL: postgresql://ci:ci-only-password@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/primecrm_ci
+          CORS_ORIGINS: https://ci.example.com
+          ALLOW_PUBLIC_REGISTRATION: 'false'
+          FIRST_SUPERUSER_EMAIL: ci@example.com
+          FIRST_COMPANY_NAME: CI Company
+        run: |
+          # Random values exist only in this runner and are never printed.
+          export SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
+          export FIRST_SUPERUSER_PASSWORD="$(python -c 'import secrets; print(secrets.token_urlsafe(24))')"
+          python -m app.bootstrap
+          unset FIRST_SUPERUSER_EMAIL FIRST_SUPERUSER_PASSWORD
+          python -m app.bootstrap
+          python - <<'PY'
+          import os
+          import psycopg2
+          with psycopg2.connect(os.environ['DATABASE_URL']) as connection:
+              with connection.cursor() as cursor:
+                  for table, expected in [('users', 1), ('companies', 1), ('pipeline_stages', 8)]:
+                      cursor.execute(f'SELECT count(*) FROM {table}')
+                      assert cursor.fetchone()[0] == expected
+          PY
+
+      - name: Validate Docker Compose configuration
+        working-directory: .
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci-only-password
+          SECRET_KEY: ci-only-signing-key-with-more-than-thirty-two-characters
+        run: |
+          docker compose -f docker-compose.yml config --quiet
+          docker compose -f docker-compose.prod.yml config --quiet
 
       - name: Build backend Docker image
         # Build only: the image stays on the runner and is never pushed.
@@ -116,3 +151,11 @@ jobs:
 
       - name: Type-check and build frontend
         run: npm run build
+
+      - name: Build frontend Docker image
+        # Build only: the image stays on the runner and is never pushed.
+        run: docker build --tag prime-crm-frontend:ci .
+
+      - name: Check nginx configuration
+        # Temporary container, no published ports and no application traffic.
+        run: docker run --rm --add-host backend:127.0.0.1 prime-crm-frontend:ci nginx -t

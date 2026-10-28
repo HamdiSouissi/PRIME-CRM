@@ -1,14 +1,23 @@
-from fastapi import FastAPI, Depends, Request
+import logging
+import os
+import time
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
-import os, time
 from .config import settings
-from .database import init_db, SessionLocal
-from .models.company import Company
+
+# Validate before constructing a database engine or importing API routers.
+# Alembic imports the configuration but does not import this module.
+settings.validate_runtime()
+
+from .database import SessionLocal
 from .models.user import User
-from .models.stage import PipelineStage
-from .routers import auth, users, clients, stages, opportunities, activities, products, quotes, dashboard, imports_exports, ai, admin
+from .schema import require_current_schema
+from .routers import activities, admin, ai, auth, clients, dashboard, imports_exports, opportunities, products, quotes, stages, users
+
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -16,25 +25,20 @@ app = FastAPI(
     description="Prime CRM - CRM intelligent pour TPE/PME par Prime Vision Solutions. API REST documentée OpenAPI.",
     docs_url="/docs",
     redoc_url="/redoc",
-    openapi_url="/openapi.json"
+    openapi_url="/openapi.json",
 )
 
-# CORS - must be permissive for preview host e2b.app
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=settings.cors_origins_list,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Rate limiting simple: track attempts per IP for login
-from collections import defaultdict
-login_attempts = defaultdict(list)
 
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
-    # Security headers
     start = time.time()
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -44,56 +48,24 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-Process-Time"] = str(time.time() - start)
     return response
 
+
 @app.on_event("startup")
 def on_startup():
-    init_db()
-    # Seed default data if empty
-    db = SessionLocal()
+    # Do not create or mutate the schema here: Alembic owns schema changes.
     try:
-        # Ensure admin exists if no users
-        from .core.security import get_password_hash
-        from datetime import datetime, timezone
-        if db.query(User).count() == 0:
-            print("Création du compte admin par défaut...")
-            company = Company(name=settings.FIRST_SUPERUSER_COMPANY, slug="prime-vision-solutions", email=settings.FIRST_SUPERUSER_EMAIL)
-            db.add(company)
-            db.flush()
-            user = User(
-                email=settings.FIRST_SUPERUSER_EMAIL,
-                hashed_password=get_password_hash(settings.FIRST_SUPERUSER_PASSWORD),
-                first_name="Admin",
-                last_name="Prime",
-                role="admin",
-                is_superuser=True,
-                company_id=company.id
-            )
-            db.add(user)
-            db.commit()
-            # stages
-            DEFAULT_STAGES = [
-                {"name": "Nouveau prospect", "color": "#64748b", "order": 1},
-                {"name": "Premier contact", "color": "#0ea5e9", "order": 2},
-                {"name": "Qualification", "color": "#8b5cf6", "order": 3},
-                {"name": "Rendez-vous programmé", "color": "#f59e0b", "order": 4},
-                {"name": "Proposition commerciale", "color": "#ec4899", "order": 5},
-                {"name": "Négociation", "color": "#f97316", "order": 6},
-                {"name": "Gagné", "color": "#22c55e", "order": 7, "is_won": True},
-                {"name": "Perdu", "color": "#ef4444", "order": 8, "is_lost": True},
-            ]
-            for s in DEFAULT_STAGES:
-                stage = PipelineStage(company_id=company.id, name=s["name"], color=s["color"], order=s["order"], is_won=s.get("is_won", False), is_lost=s.get("is_lost", False))
-                db.add(stage)
-            db.commit()
-            print(f"Admin créé: {settings.FIRST_SUPERUSER_EMAIL} / {settings.FIRST_SUPERUSER_PASSWORD}")
-    except Exception as e:
-        print(f"Startup error: {e}")
-    finally:
-        db.close()
-    
-    # ensure upload dir
+        with SessionLocal() as db:
+            require_current_schema(db)
+            has_users = db.query(User.id).first() is not None
+    except Exception:
+        # Driver errors and SQL details may contain database credentials.
+        raise RuntimeError("Base inaccessible ou migrations non appliquées") from None
+
+    if not has_users and not settings.ALLOW_PUBLIC_REGISTRATION:
+        raise RuntimeError("Aucun utilisateur : initialisez d'abord le premier administrateur")
+
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
 
-# Routers
+
 app.include_router(auth.router, prefix=settings.API_V1_STR)
 app.include_router(users.router, prefix=settings.API_V1_STR)
 app.include_router(clients.router, prefix=settings.API_V1_STR)
@@ -107,6 +79,7 @@ app.include_router(imports_exports.router, prefix=settings.API_V1_STR)
 app.include_router(ai.router, prefix=settings.API_V1_STR)
 app.include_router(admin.router, prefix=settings.API_V1_STR)
 
+
 @app.get("/", tags=["health"])
 def root():
     return {
@@ -114,22 +87,25 @@ def root():
         "version": settings.VERSION,
         "status": "ok",
         "docs": "/docs",
-        "message": "Prime CRM API - Propulsé par Prime Vision Solutions"
+        "message": "Prime CRM API - Propulsé par Prime Vision Solutions",
     }
+
 
 @app.get("/health", tags=["health"])
 def health():
     return {"status": "ok", "version": settings.VERSION}
 
+
 @app.get("/api/v1/health", tags=["health"])
 def health_v1():
     return {"status": "ok", "version": settings.VERSION}
 
-# Global exception handler to avoid leaking secrets
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    # Don't expose internal details for 500
-    import traceback
-    print(f"Unhandled error on {request.url}: {exc}")
-    traceback.print_exc()
+    # Do not log request URLs, query strings, bodies, exception messages or
+    # tracebacks: these can contain credentials. The route template is safe.
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", "<unknown>")
+    logger.error("Unhandled %s on route %s", type(exc).__name__, route_path)
     return JSONResponse(status_code=500, content={"detail": "Erreur interne du serveur"})

@@ -3,7 +3,7 @@
 **Prime CRM** est une application éditée par **Prime Vision Solutions** (Tunis, Tunisie) pour centraliser clients, pipeline commercial, devis, agenda et intelligence artificielle facultative.
 
 > [!WARNING]
-> Le projet n'est pas encore prêt pour une exposition publique. Avant le premier déploiement, il faut notamment corriger les secrets par défaut et les journaux, restreindre CORS, sécuriser les clés IA actuellement stockées en clair, intégrer Redis et vérifier les dépendances. Une CI verte ne constitue pas une validation de sécurité.
+> Le projet n'est pas encore prêt pour une exposition publique. L'accès privé, les migrations et une première restriction CORS sont en place, mais il reste notamment à limiter les connexions, protéger les clés IA stockées en clair, intégrer Redis, prévoir la rotation des mots de passe et vérifier les dépendances et les sauvegardes. Une CI verte ne constitue pas une validation de sécurité.
 
 ![Prime CRM](https://img.shields.io/badge/Stack-React%20%2B%20FastAPI%20%2B%20PostgreSQL-0ea5e9)
 ![License](https://img.shields.io/badge/License-MIT-green)
@@ -56,7 +56,7 @@
 
 ### Sécurité & Confidentialité
 - Auth JWT + bcrypt, rôles (admin/manager/commercial/viewer) vérifiés serveur, séparation données par entreprise
-- Protections XSS/CSRF/SQLi (SQLAlchemy paramétré), validation Pydantic stricte, rate-limiting login, audit log, sessions sécurisées
+- SQLAlchemy paramétré et validation Pydantic ; la protection contre les tentatives de connexion et les autres mesures de sécurité restent à vérifier avant exposition publique.
 - Uploads limités à 10 Mo ; les clés API IA sont masquées à l'affichage mais actuellement stockées en clair. HTTPS, CORS, conservation des données et sauvegardes doivent être vérifiés avant production.
 
 ### Administration
@@ -71,7 +71,7 @@ Prime CRM/
 ├── frontend/      React 18 + TypeScript + Vite + Tailwind + shadcn/ui + Recharts + DnD Kit
 ├── backend/       FastAPI + SQLAlchemy 2 + Pydantic v2 + Alembic + JWT + fpdf2
 ├── db/            PostgreSQL 16 + healthchecks + volumes persistants
-├── redis/         (optionnel, profil with-redis) Celery prêt
+├── redis/         service local optionnel ; intégration applicative à faire
 └── docker-compose.yml + docker-compose.prod.yml
 ```
 
@@ -94,7 +94,7 @@ Company 1──* User
 
 | Module | Endpoints clés |
 |--------|----------------|
-| Auth | `POST /auth/register, /login, /login-json, /me, /seed-admin` |
+| Auth | `POST /auth/login`, `POST /auth/login-json`, `GET /auth/me` ; inscription publique désactivée en production |
 | Clients | `GET/POST /clients, /clients/{id}/full, /duplicates, /merge, /contacts` |
 | Pipeline | `GET /stages, POST /stages, GET /opportunities/pipeline, /alerts, POST /move` |
 | Activités | `GET/POST /activities, /overdue, /upcoming, /complete` |
@@ -121,9 +121,12 @@ Company 1──* User
 git clone https://github.com/HamdiSouissi/PRIME-CRM.git
 cd PRIME-CRM
 
-# 2. Configurer l'environnement (copiez et éditez si besoin)
+# 2. Configurer l'environnement
 cp .env.example .env
 # Sur Windows : copy .env.example .env
+# Éditer .env : POSTGRES_PASSWORD, SECRET_KEY, FIRST_SUPERUSER_EMAIL et
+# FIRST_SUPERUSER_PASSWORD doivent être renseignés pour une base vide.
+# Générer les secrets localement ; ne jamais les partager ni les commiter.
 
 # 3. Démarrer les services (1ère fois ~2-3 min pour télécharger les images)
 docker compose up --build -d
@@ -131,7 +134,7 @@ docker compose up --build -d
 # 4. Vérifier
 docker compose ps
 # Attendez que backend soit healthy (healthcheck) puis:
-docker compose logs backend --tail 50
+docker compose logs backend --tail 50  # ne jamais partager sans masquer les secrets
 
 # 5. Accéder
 # Frontend : http://localhost
@@ -139,34 +142,39 @@ docker compose logs backend --tail 50
 # API Health: http://localhost:8000/health
 ```
 
-**Premier compte administrateur** : créé automatiquement au démarrage si BDD vide :
-- Email : `admin@primevisionsolutions.tn`
-- Mot de passe : `Admin123!`
-- *Changez-le immédiatement après connexion via Paramètres > Utilisateurs*
+**Premier compte administrateur** : sur une base vide et migrée, la commande
+`python -m app.bootstrap` crée le compte à partir des variables d'environnement
+`FIRST_SUPERUSER_EMAIL` et `FIRST_SUPERUSER_PASSWORD`, sans afficher le mot de
+passe. Docker Compose exécute cette commande après les migrations. Le mot de
+passe doit avoir au moins 16 caractères et au plus 72 octets.
 
-Ou recréez manuellement :
+Les inscriptions publiques et l'ancien endpoint d'initialisation sont désactivés.
+L'administrateur peut créer les autres utilisateurs dans **Paramètres → Utilisateurs**.
+La modification du mot de passe depuis l'interface reste à implémenter ; conserver
+le mot de passe initial en lieu sûr et ne pas exposer l'application avant les
+correctifs restants.
+
+### Développement local (sans Docker, SQLite)
+
 ```bash
-curl -X POST http://localhost:8000/api/v1/auth/seed-admin
-# ou via l'écran de login bouton "Initialiser le compte admin"
-```
-
-**Créer votre propre espace** : Page d'inscription → nouvelle entreprise isolée créée automatiquement avec 8 étapes pipeline par défaut.
-
-### Développement local (sans Docker, SQLite fallback)
-
-```bash
-# Backend (SQLite par défaut si DATABASE_URL non défini)
 cd backend
 python -m venv venv && source venv/bin/activate  # venv\Scripts\activate sur Windows
 pip install -r requirements.txt
+cp ../.env.example .env  # fichier ignoré par Git ; renseigner les secrets localement
+# APP_ENV=development et DATABASE_URL=sqlite:///./prime_crm.db dans backend/.env
+alembic upgrade head
+python -m app.bootstrap
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-# Migrations (si PostgreSQL) : alembic upgrade head
 
-# Frontend
+# Dans un autre terminal, depuis la racine du dépôt :
 cd frontend
-npm install
+npm ci
 npm run dev  # http://localhost:5173 (proxy /api vers 8000)
 ```
+
+Avant `app.bootstrap`, renseigner `SECRET_KEY`, `FIRST_SUPERUSER_EMAIL` et
+`FIRST_SUPERUSER_PASSWORD` dans le fichier ignoré `backend/.env`. Ne pas publier
+ce serveur de développement.
 
 ### Configuration Ollama (IA locale gratuite)
 
@@ -181,16 +189,11 @@ npm run dev  # http://localhost:5173 (proxy /api vers 8000)
 
 > ⚠️ **Docker ≠ localhost** : en Docker, `localhost` côté conteneur ≠ machine hôte. Utilisez toujours `host.docker.internal` pour joindre Ollama depuis `docker-compose`.
 
-### Configuration CodeCraftAPI
+### Fournisseurs IA externes
 
-1. Obtenez une clé sur https://www.codecraftapi.com
-2. Dans Prime CRM : **Paramètres > IA > + CodeCraftAPI**
-   - URL préremplie : `https://www.codecraftapi.com/v1`
-   - Clé API secrète (masquée après sauvegarde)
-   - Modèle : `gpt-4o-mini` (ou via **Actualiser les modèles** → GET /models)
-   - **Tester la connexion** + **Actualiser les modèles**
-3. Choix du fournisseur par fonctionnalité disponible (feature_mapping)
-4. La clé n'est jamais retournée en clair (masquée `sk-****6789`), jamais loggée, jamais dans Git
+Les clés API IA sont actuellement stockées en clair. Ne pas enregistrer de clé
+réelle avant correction et revue de sécurité. La gratuité d'un fournisseur
+externe n'est pas garantie ; voir `docs/codecraftapi.md`.
 
 ### Accès application
 
@@ -208,12 +211,13 @@ npm run dev  # http://localhost:5173 (proxy /api vers 8000)
 |---------|-------|------|--------|-------------|
 | `db` | postgres:16-alpine | 5432 | pgdata | pg_isready |
 | `backend` | python:3.11-slim + FastAPI | 8000 | backend_uploads | /health |
-| `frontend` | node:20 build → nginx:alpine | 80 | - | wget / |
+| `frontend` | node:24 build → nginx:alpine | 80 | - | wget / |
 | `redis` | redis:7-alpine (profil `with-redis`) | 6379 | redisdata | redis-cli ping |
 
-- **Volumes persistants** : `pgdata`, `redisdata`, `backend_uploads`
+- **Volumes persistants** : `pgdata`, `redisdata`, `backend_uploads` ; ils ne remplacent pas une sauvegarde testée.
+- Les ports du Compose de développement sont liés à `127.0.0.1` par défaut.
 - **Réseau interne** : `prime-net` (bridge)
-- **Migrations** : `alembic upgrade head` auto au démarrage backend (fallback `init_db()` si Alembic non configuré)
+- **Migrations** : `alembic upgrade head` avant `python -m app.bootstrap` et le serveur ; aucune création de schéma de secours si la migration échoue.
 - **.env** : voir `.env.example` sans secrets
 
 ### Commandes usuelles
@@ -230,30 +234,16 @@ docker compose restart backend    # redémarrer backend seul
 
 ### Production `docker-compose.prod.yml`
 
-- Variables `POSTGRES_*`, `SECRET_KEY`, `FIRST_SUPERUSER_*` **obligatoires** via `.env` (pas de valeurs par défaut)
+- Variables `POSTGRES_*` et `SECRET_KEY` obligatoires ; `FIRST_SUPERUSER_*` est requis uniquement lors de la première initialisation d'une base vide. Ne pas déployer avant les correctifs restants.
 - `restart: always`, `workers: 2` pour Gunicorn/Uvicorn, pas de `reload`
-- HTTPS via reverse proxy externe (Nginx/Traefik + Let's Encrypt) — config exemple dans `docs/deployment.md`
+- HTTPS via un hébergeur ou un reverse proxy externe : configuration à définir et vérifier avant déploiement.
 
-### Sauvegarde & Restauration (testée)
+### Sauvegarde & restauration : à valider
 
-```bash
-# Sauvegarde SQL (recommandé, complet)
-docker compose exec db pg_dump -U prime primecrm > backup_$(date +%F).sql
-
-# Sauvegarde JSON via API (clients/opportunités/produits)
-curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/admin/backup -o backup.json
-
-# Restauration SQL
-cat backup_2026-10-26.sql | docker compose exec -T db psql -U prime primecrm
-docker compose exec backend alembic upgrade head  # s'assurer du schéma
-
-# Volumes : sauvegarde Docker
-docker run --rm -v prime-crm_pgdata:/data -v $(pwd):/backup alpine tar czf /backup/pgdata.tar.gz /data
-```
-
-Procédure complète : `docs/backup.md`
-
----
+Les volumes Docker ne sont pas une sauvegarde. Le JSON de l'API est partiel ;
+une stratégie de sauvegarde et une restauration sur base jetable restent à
+valider avant utilisation. Voir `docs/backup.md`. Ne jamais lancer de commande
+de restauration sur une base réelle sans avoir confirmé sa cible.
 
 ## 🔐 Sécurité
 
@@ -262,42 +252,34 @@ Détail : `docs/security.md`
 - JWT HS256, expiration 7j, bcrypt 4.x, CORS restrictif, headers sécurité
 - Permissions `require_admin`, `get_current_user` vérifiées à chaque requête, `company_id` injecté pour isolation
 - Tests d'isolation : `test_company_isolation` vérifie qu'une entreprise ne voit pas les données d'une autre
-- Clés API stockées `api_key_encrypted`, retournées masquées, jamais loggées
+- Les clés API IA sont masquées à l'affichage mais actuellement stockées en clair ; ne pas les utiliser avant correction.
 - Ne jamais commiter `.env` réel (voir `.gitignore`), utiliser `.env.example`
 
 ---
 
 ## 🧪 Tests & Qualité
 
-### Backend (Pytest)
+Les commandes et les limites de la CI sont détaillées dans `docs/ci.md`.
+Après activation d'un environnement Python 3.11 dans `backend` :
 
 ```bash
-cd backend && source .venv/bin/activate
-pytest -v                          # tous
-pytest app/tests/test_auth.py -v   # auth & isolation
-pytest app/tests/test_crud.py -v   # clients/pipeline/devis/import/calculs
-pytest app/tests/test_ai.py -v     # fournisseurs IA & fallback sans IA
+pip install -r requirements-dev.txt
+python -m ruff check app alembic
+python -m pytest -q app/tests
 ```
 
-**10 tests passés** couvrant : auth, isolation multi-entreprise, CRUD clients, pipeline & transitions, calculs TVA/remise/pondéré, PDF, import/preview/validation/export, automation anti-doublon, IA providers, gestion erreurs IA, séparation données, sauvegarde.
-
-### Frontend (Vitest + Playwright)
+Avec Node.js 24 dans `frontend` :
 
 ```bash
-cd frontend
-npm test              # Vitest
-npx playwright test    # E2E parcours critiques (login → client → pipeline → devis → dashboard)
-npm run build         # vérifie TS + Vite
+npm ci
+npm run lint
+npm run test -- --run
+npm run build
 ```
 
-### Docker
-
-```bash
-docker compose config   # valide YAML
-docker compose up --build -d && curl http://localhost:8000/health
-```
-
----
+Les tests ne remplacent ni un audit de sécurité ni des tests de bout en bout.
+`docker compose config --quiet` valide la configuration sans afficher les
+valeurs résolues ; les secrets ne doivent jamais être partagés.
 
 ## 📚 Documentation
 
@@ -307,9 +289,9 @@ docker compose up --build -d && curl http://localhost:8000/health
 | `docs/api.md` | Endpoints, exemples curl, codes erreurs |
 | `docs/ollama.md` | Installation Ollama, modèles conseillés, RAM, licences |
 | `docs/codecraftapi.md` | Config, GET /models, POST /chat/completions, quotas |
-| `docs/security.md` | Modèle menaces, headers, RBAC, audit, RGPD Tunisie/France |
-| `docs/backup.md` | Sauvegarde/restauration pas-à-pas testée |
-| `docs/deployment.md` | Prod HTTPS, reverse proxy, CI/CD GitHub Actions |
+| `docs/security.md` | Configuration privée et risques restant à traiter |
+| `docs/backup.md` | Sauvegarde/restauration à planifier et valider |
+| `docs/deployment.md` | Prérequis avant le premier déploiement |
 | `docs/contributing.md` | Guide contribution, branches, commits |
 | `CONTOUR.md` | Limites connues & roadmap |
 
@@ -323,39 +305,15 @@ docker compose up --build -d && curl http://localhost:8000/health
 
 ---
 
-## ✅ Critères d'acceptation
+## ✅ Validation avant déploiement
 
-Tous les **18 critères** du cahier des charges sont remplis :
+La CI vérifie le code et les migrations sur des bases jetables. Il reste à
+intégrer Redis, sécuriser les connexions et les clés IA, vérifier les
+sauvegardes et les dépendances, puis tester le cycle complet sur les services
+hébergés. Aucune exposition publique ne doit être déduite d'une CI verte.
 
-- [x] Démarre via `docker compose up --build` depuis instructions documentées
-- [x] Services Docker healthy, migrations sur base vierge, login & permissions
-- [x] CRUD clients/prospects, recherche, pipeline Kanban fonctionnel
-- [x] Devis PDF généré avec données réelles, tableaux bord avec données réelles
-- [x] Automatisations configurables, journalisées, anti-doublon
-- [x] IA locale configurable sans clé externe, CodeCraftAPI testable, CRM sans IA
-- [x] Secrets non exposés, données isolées, tests exécutés, guide vérifié, historique Git propre
-
----
-
-## 🗂️ Git
-
-```bash
-git log --oneline
-# 65ac7a7 Initial commit
-# ... commits par fonctionnalité (voir historique)
-
-git remote -v
-# origin https://github.com/HamdiSouissi/PRIME-CRM.git
-```
-
-Branche de livraison : `arena/b84c30e4-prime-crm` → PR vers `main`
-
-```bash
-git push origin arena/b84c30e4-prime-crm
-gh pr create --title "Prime CRM v1.0 — Livraison complète" --body "..."
-```
-
----
+Les changements sont publiés sur la branche de travail de la session. Aucune
+fusion vers `main` ni aucun déploiement n'est automatique à ce stade.
 
 ## 📄 Licence & Crédits
 
@@ -372,8 +330,8 @@ Choix techniques justifiés dans `docs/architecture.md` (React/Vite pour réacti
 | `port is already allocated` | Port 80/5432 occupé | Changez `FRONTEND_PORT=8080` dans `.env`, ou `docker compose down` + libérez port |
 | `Ollama ConnectError` | URL localhost depuis Docker | Utilisez `http://host.docker.internal:11434` + `extra_hosts: host-gateway` |
 | `401 Unauthorized` | Token expiré | Reconnectez-vous (7j), videz localStorage si besoin |
-| `relation does not exist` | Migrations non appliquées | `docker compose exec backend alembic upgrade head` ou `init_db()` fallback auto |
-| `permission denied` | Rôle insuffisant | Connectez-vous en admin (`admin@primevisionsolutions.tn`) |
+| `relation does not exist` | Migrations non appliquées | Vérifier la base puis exécuter `alembic upgrade head` avant le démarrage ; aucune création automatique de schéma |
+| `permission denied` | Rôle insuffisant | Connectez-vous avec le compte administrateur configuré |
 | `no space left` | Volumes pleins | `docker system prune`, `docker compose down -v` (attention données) |
 
 ---

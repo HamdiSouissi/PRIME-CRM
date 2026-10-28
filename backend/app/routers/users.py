@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List
 from ..database import get_db
 from ..models.user import User
-from ..core.security import get_password_hash
+from ..core.security import get_password_hash, is_acceptable_new_password
 from ..core.permissions import get_current_user, require_admin
 from ..schemas.auth import UserResponse
 from pydantic import BaseModel, EmailStr
@@ -43,6 +43,10 @@ def list_users(db: Session = Depends(get_db), current_user: User = Depends(get_c
 
 @router.post("", response_model=UserResponse)
 def create_user(payload: UserCreate, db: Session = Depends(get_db), current_user: User = Depends(require_admin)):
+    if not is_acceptable_new_password(payload.password):
+        raise HTTPException(status_code=400, detail="Mot de passe : au moins 16 caractères, au plus 72 octets, sans espaces aux extrémités")
+    if payload.role not in {"admin", "manager", "commercial", "viewer"}:
+        raise HTTPException(status_code=400, detail="Rôle invalide")
     existing = db.query(User).filter(User.email == payload.email).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email déjà utilisé")
