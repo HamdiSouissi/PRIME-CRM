@@ -2,6 +2,9 @@
 
 import os
 import secrets
+from urllib.parse import urlsplit
+
+import pytest
 
 
 # This affects only the pytest process and its children. No application/Neon
@@ -21,4 +24,41 @@ os.environ["FIRST_COMPANY_NAME"] = "Test Company"
 # Legacy unit tests run without Redis; dedicated tests override the dependency
 # with an isolated local Redis. This mutates only the pytest process.
 from app.config import settings
+from app.services.redis_store import create_redis_store
+
 settings.REDIS_URL = ""
+
+
+@pytest.fixture
+def redis_store():
+    """Only the explicitly selected local Redis; never a hosted service."""
+    url = os.environ.get("CI_TEST_REDIS_URL", "")
+    if not url:
+        if os.environ.get("CI", "").lower() == "true":
+            pytest.fail("CI_TEST_REDIS_URL must point to the disposable local Redis service")
+        pytest.skip("Set CI_TEST_REDIS_URL to an isolated local Redis to run integration tests")
+    try:
+        parsed = urlsplit(url)
+        safe = (
+            parsed.scheme == "redis"
+            and parsed.hostname == "127.0.0.1"
+            and parsed.port is not None and parsed.port >= 1024
+            and parsed.username is None and parsed.password is None
+            and parsed.path in {"", "/0"}
+            and not parsed.query and not parsed.fragment
+        )
+    except ValueError:
+        safe = False
+    if not safe:
+        pytest.fail("CI_TEST_REDIS_URL must be an unauthenticated loopback-only Redis URL")
+
+    prefix = f"primecrm-test-{secrets.token_hex(12)}"
+    store = create_redis_store(url, "test-only-signing-key-with-more-than-32-characters", prefix)
+    store.check_writable()
+    try:
+        yield store
+    finally:
+        # Delete only keys under this run's random namespace; never FLUSHDB.
+        for key in store.client.scan_iter(match=f"{prefix}:*", count=100):
+            store.client.delete(key)
+        store.close()

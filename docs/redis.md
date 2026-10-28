@@ -87,7 +87,42 @@ Les bases Free peuvent être [archivées après au moins 30 jours d'inactivité]
 vérifier leur disponibilité avant une connexion ou un déploiement ultérieur.
 Vérifier les conditions avant toute création : tarifs et limites peuvent changer.
 
-## Tests
+## Vérifier la connexion à la base Upstash dédiée
+
+Le module `backend/app/verify_redis.py` permet de tester **sans déployer** une
+base dédiée déjà créée. Il demande l'URL TCP Upstash authentifiée via une
+saisie masquée ; elle ne doit être ni partagée, ni collée dans une commande,
+ni enregistrée dans un fichier. Le module ne se connecte pas à PostgreSQL : il
+utilise une configuration fictive isolée de la configuration réelle et de
+`.env`.
+
+Le test vérifie le certificat et le nom d'hôte TLS, l'authentification,
+l'écriture, le cache chiffré et le script Lua de compteur. Il crée seulement
+deux clés fictives dans un préfixe aléatoire, chacune avec une expiration de
+30 ou 60 secondes, puis tente de les supprimer ; il ne lance jamais `FLUSHDB`
+ni `SCAN`. Ce test ne vérifie pas la connexion HTTP, le frontend ou le cycle
+de déploiement. Les erreurs sont volontairement résumées sans URL ni secrets.
+
+Dans la console Upstash, ouvrez votre base, puis **Connect → TCP** et copiez
+l'URL commençant par `rediss://`. N'utilisez pas l'URL REST en `https://`.
+Depuis la racine du dépôt, avec les dépendances backend installées :
+
+```powershell
+Push-Location backend
+try {
+    & '..\.venv\neon-migration\Scripts\python.exe' -m app.verify_redis
+    if ($LASTEXITCODE -ne 0) { throw 'Test Redis non validé.' }
+} finally { Pop-Location }
+```
+
+Collez l'URL **uniquement à l'invite masquée**, puis validez avec Entrée. Le
+résultat attendu se termine par `TEST_REDIS_OK`. Utilisez PowerShell dans un
+vrai terminal et non une fenêtre de sortie : si la saisie masquée est
+indisponible, le programme s'arrête avant la saisie. Videz ensuite le
+presse-papiers si nécessaire. Ce bloc n'a pas été exécuté sur Windows dans cet
+environnement.
+
+## Tests automatisés
 
 La CI démarre un Redis jetable dans le runner. Elle vérifie cache chiffré,
 isolation entre entreprises, invalidation, expiration, limitation concurrente,

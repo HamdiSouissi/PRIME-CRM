@@ -5,7 +5,6 @@ from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
-import secrets
 import select
 import socket
 import socketserver
@@ -40,41 +39,6 @@ from app.services.redis_store import (
 
 TEST_KEY = "test-only-signing-key-with-more-than-32-characters"
 TEST_PASSWORD = "test-only-user-password-9827"
-
-
-@pytest.fixture
-def redis_store():
-    # Never use REDIS_URL from the user's environment or an external provider.
-    url = os.environ.get("CI_TEST_REDIS_URL", "")
-    if not url:
-        if os.environ.get("CI", "").lower() == "true":
-            pytest.fail("CI_TEST_REDIS_URL must point to the disposable local Redis service")
-        pytest.skip("Set CI_TEST_REDIS_URL to an isolated local Redis to run integration tests")
-    try:
-        parsed = urlsplit(url)
-        safe = (
-            parsed.scheme == "redis"
-            and parsed.hostname == "127.0.0.1"
-            and parsed.port is not None and parsed.port >= 1024
-            and parsed.username is None and parsed.password is None
-            and parsed.path in {"", "/0"}
-            and not parsed.query and not parsed.fragment
-        )
-    except ValueError:
-        safe = False
-    if not safe:
-        pytest.fail("CI_TEST_REDIS_URL must be an unauthenticated loopback-only Redis URL")
-
-    prefix = f"primecrm-test-{secrets.token_hex(12)}"
-    store = create_redis_store(url, TEST_KEY, prefix)
-    store.check_writable()
-    try:
-        yield store
-    finally:
-        # Delete only keys under this run's random namespace; never FLUSHDB.
-        for key in store.client.scan_iter(match=f"{prefix}:*", count=100):
-            store.client.delete(key)
-        store.close()
 
 
 @pytest.fixture
