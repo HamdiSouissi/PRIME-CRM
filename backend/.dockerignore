@@ -1,0 +1,24 @@
+# Keep local credentials, data and development artifacts out of image builds.
+**/.env
+**/.env.*
+**/.venv/
+**/venv/
+**/secrets/
+**/*.pem
+**/*.key
+**/*.crt
+**/*.db
+**/*.sqlite
+**/*.sqlite3
+**/*.dump
+**/*.sql.gz
+**/uploads/
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+**/.coverage
+**/htmlcov/
+**/*.log
+**/.git/

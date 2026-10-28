@@ -113,7 +113,7 @@ def get_alerts(db: Session = Depends(get_db), current_user: User = Depends(get_c
         if stage and (stage.is_won or stage.is_lost):
             continue
         if o.updated_at and (now - o.updated_at.replace(tzinfo=timezone.utc) if o.updated_at.tzinfo is None else now - o.updated_at).days > 14:
-            alerts.append({"type": "stale", "opportunity_id": o.id, "title": o.title, "message": f"Aucune activité depuis 14 jours", "stage_name": stage.name if stage else ""})
+            alerts.append({"type": "stale", "opportunity_id": o.id, "title": o.title, "message": "Aucune activité depuis 14 jours", "stage_name": stage.name if stage else ""})
         if o.expected_close_date:
             from datetime import date
             if o.expected_close_date < date.today():

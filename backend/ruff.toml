@@ -1,0 +1,11 @@
+# Baseline correctness checks; the existing project still has unused imports
+# and variables to clean up before those two rules can be enabled.
+target-version = "py311"
+
+[lint]
+select = ["E9", "F"]
+ignore = ["F401", "F841"]
+
+[lint.per-file-ignores]
+# Alembic intentionally imports every model to populate Base.metadata.
+"alembic/env.py" = ["F403"]

@@ -1,0 +1,4 @@
+-r requirements.txt
+
+# Static analysis in local development and GitHub Actions.
+ruff==0.17.3

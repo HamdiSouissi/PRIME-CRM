@@ -130,7 +130,6 @@ def list_executions(db: Session = Depends(get_db), current_user: User = Depends(
 @router.post("/backup")
 def create_backup(db: Session = Depends(get_db), current_user: User = Depends(require_admin)):
     """Export JSON de toutes les données de l'entreprise"""
-    from ..models.client import Client
     from ..models.opportunity import Opportunity
     from ..models.activity import Activity
     from ..models.product import Product
@@ -151,7 +150,6 @@ def create_backup(db: Session = Depends(get_db), current_user: User = Depends(re
 
 @router.get("/stats")
 def admin_stats(db: Session = Depends(get_db), current_user: User = Depends(require_admin)):
-    from ..models.client import Client
     from ..models.opportunity import Opportunity
     from ..models.activity import Activity
     return {

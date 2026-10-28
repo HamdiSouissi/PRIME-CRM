@@ -1,6 +1,9 @@
 # Prime CRM — CRM intelligent pour TPE & PME
 
-**Prime CRM** est une application SaaS complète éditée par **Prime Vision Solutions** (Tunis, Tunisie) pour centraliser clients, pipeline commercial, devis, agenda et intelligence artificielle facultative. Le produit est **fonctionnel, sécurisé, maintenable et déployable en 1 commande Docker**.
+**Prime CRM** est une application éditée par **Prime Vision Solutions** (Tunis, Tunisie) pour centraliser clients, pipeline commercial, devis, agenda et intelligence artificielle facultative.
+
+> [!WARNING]
+> Le projet n'est pas encore prêt pour une exposition publique. Avant le premier déploiement, il faut notamment corriger les secrets par défaut et les journaux, restreindre CORS, sécuriser les clés IA actuellement stockées en clair, intégrer Redis et vérifier les dépendances. Une CI verte ne constitue pas une validation de sécurité.
 
 ![Prime CRM](https://img.shields.io/badge/Stack-React%20%2B%20FastAPI%20%2B%20PostgreSQL-0ea5e9)
 ![License](https://img.shields.io/badge/License-MIT-green)
@@ -54,7 +57,7 @@
 ### Sécurité & Confidentialité
 - Auth JWT + bcrypt, rôles (admin/manager/commercial/viewer) vérifiés serveur, séparation données par entreprise
 - Protections XSS/CSRF/SQLi (SQLAlchemy paramétré), validation Pydantic stricte, rate-limiting login, audit log, sessions sécurisées
-- Uploads limités 10 Mo, clés API chiffrées/masquées, HTTPS prod, CORS, headers sécurité, conservation/suppression, sauvegardes testées
+- Uploads limités à 10 Mo ; les clés API IA sont masquées à l'affichage mais actuellement stockées en clair. HTTPS, CORS, conservation des données et sauvegardes doivent être vérifiés avant production.
 
 ### Administration
 - Entreprise (logo, couleurs, coordonnées, devise, locale, taxes), utilisateurs/rôles, étapes pipeline, catégories/sources, modèles devis, notifications, règles, fournisseurs IA, imports/exports, sauvegardes, logs, sécurité
