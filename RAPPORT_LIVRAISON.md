@@ -4,8 +4,8 @@
 > résultats ci-dessous décrivent un ancien état du projet et ne constituent
 > pas une preuve de sécurité, de restauration ou de déploiement. L'inscription
 > publique et `seed-admin` ont été supprimés/désactivés ; les clés IA sont
-> stockées en clair, Redis reste à intégrer et les sauvegardes à tester. Pour
-> les instructions actuelles, suivre le `README.md`, `docs/security.md`,
+> stockées en clair, le service Redis hébergé reste à configurer et les sauvegardes
+> à tester. Pour les instructions actuelles, suivre le `README.md`, `docs/security.md`,
 > `docs/ci.md` et `docs/deployment.md`. Ne pas exposer le CRM publiquement.
 
 **Date** : 2026-10-26  
@@ -46,7 +46,7 @@ Les statuts historiques de ce tableau ne constituent pas une validation actuelle
 - **Frontend** : React 18 + TypeScript + Vite — réactivité, typage, build <6s, HMR, écosystème shadcn/ui (qualité SaaS). Recharts pour graphiques simples (vs D3 lourd). DnD Kit pour Kanban moderne (vs react-beautiful-dnd déprécié).
 - **Backend** : Python 3.11 + FastAPI — async natif, perfs, docs OpenAPI auto, Pydantic v2 validation stricte, SQLAlchemy 2 ORM. Alembic migrations. fpdf2 pour PDF léger (vs WeasyPrint lourd).
 - **BDD** : PostgreSQL 16 — intégrité ACID, JSON, healthcheck `pg_isready`, volume pgdata. SQLite fallback en dev pour tester sans Docker.
-- **Cache/Tasks** : Redis disponible en profil local, mais non encore intégré à l'application ; requis avant le premier déploiement.
+- **Cache/Tasks** : Redis intégré pour le cache et la limitation par identifiant ; service hébergé à configurer. Celery n'est pas déployé.
 - **Déploiement** : Docker Compose — 1 commande, reproductible Windows/Mac/Linux, volumes persistants, réseau bridge, healthchecks, extra_hosts host-gateway pour Ollama.
 
 Voir `docs/architecture.md` pour schémas détaillés.
@@ -60,7 +60,7 @@ Voir `docs/architecture.md` pour schémas détaillés.
 | `db` | 5432 → 5432 | postgres:16-alpine | PostgreSQL |
 | `backend` | 8000 → 8000 | python:3.11-slim | FastAPI + migrations |
 | `frontend` | 80 → 80 | node:24 build → nginx:alpine | React SPA + proxy /api |
-| `redis` | 6379 → 6379 | redis:7-alpine | Optionnel, profil with-redis |
+| `redis` | 6379 → 6379 | redis:7-alpine | Cache et limitation, service local |
 
 Réseau `prime-net`, volumes `pgdata`, `redisdata`, `backend_uploads`.
 
@@ -136,14 +136,14 @@ Les parcours complets et la restauration restent à valider sur l'état actuel.
 
 | Problème | Impact | Contournement / Roadmap |
 |----------|--------|--------------------------|
-| Redis/Celery non utilisé en prod | Tâches async pas planifiées (cron) | `automation_service.run_scheduled_automations()` prêt à brancher sur Celery beat ou cron Docker ; `docker compose --profile with-redis up` |
+| Redis hébergé et Celery non configurés | Connexions et tâches planifiées indisponibles en hébergement | Configurer Redis gratuitement ; évaluer les tâches planifiées séparément |
 | OAuth Google/Outlook non branché | Pas de sync calendrier externe auto | API prête, doc `docs/integrations.md` explique branchement ; notifications in-app OK |
 | Fichiers joints (upload) limité à notes | Pas de stockage S3 | Upload dir `/app/uploads` 10 Mo, extension S3 prévue (variable `S3_BUCKET`) |
 | Clés API IA stockées en clair | Secrets exposés en base | Ne pas enregistrer de clé réelle avant correction et revue |
 | Tests de bout en bout non validés | Les tests unitaires ne couvrent pas le parcours complet | Définir et exécuter des tests de bout en bout |
 | Traduction anglais/arabe non complète | UI fr par défaut seulement | Architecture i18n prête (`locale` par entreprise, fichiers `src/i18n/`), clés à traduire |
 
-**Bloquants avant exposition** : Redis, limitation des connexions, clés IA, rotation, dépendances et sauvegardes.
+**Bloquants avant exposition** : Redis hébergé, protection par IP, clés IA, rotation, dépendances et sauvegardes.
 
 ---
 

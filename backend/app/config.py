@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7
     ALGORITHM: str = "HS256"
     DATABASE_URL: str = "sqlite:///./prime_crm.db"
+    # Production requires an authenticated TLS Redis connection.
+    REDIS_URL: str = ""
 
     # An empty list allows no cross-origin browser requests.
     CORS_ORIGINS: str = ""
@@ -90,6 +92,28 @@ class Settings(BaseSettings):
                 raise ValueError("Production requires a valid PostgreSQL DATABASE_URL with host and database") from None
             if self.ALLOW_PUBLIC_REGISTRATION:
                 raise ValueError("Public registration is disabled in production")
+
+        if self.REDIS_URL:
+            try:
+                redis_url = urlsplit(self.REDIS_URL)
+                port = redis_url.port  # validates malformed or out-of-range ports
+                valid_redis = (
+                    redis_url.scheme in {"redis", "rediss"}
+                    and bool(redis_url.hostname)
+                    and (port is None or 0 < port <= 65535)
+                    and redis_url.path in {"", "/0"}
+                    and not redis_url.query
+                    and not redis_url.fragment
+                    and not any(char.isspace() for char in self.REDIS_URL)
+                )
+                if self.APP_ENV == "production":
+                    valid_redis = valid_redis and redis_url.scheme == "rediss" and bool(redis_url.password)
+            except ValueError:
+                valid_redis = False
+            if not valid_redis:
+                raise ValueError("REDIS_URL must be a valid Redis URL (authenticated TLS in production)") from None
+        elif self.APP_ENV == "production":
+            raise ValueError("REDIS_URL is required in production")
 
         for origin in self.cors_origins_list:
             try:

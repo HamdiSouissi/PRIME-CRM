@@ -3,7 +3,7 @@
 **Prime CRM** est une application éditée par **Prime Vision Solutions** (Tunis, Tunisie) pour centraliser clients, pipeline commercial, devis, agenda et intelligence artificielle facultative.
 
 > [!WARNING]
-> Le projet n'est pas encore prêt pour une exposition publique. L'accès privé, les migrations et une première restriction CORS sont en place, mais il reste notamment à limiter les connexions, protéger les clés IA stockées en clair, intégrer Redis, prévoir la rotation des mots de passe et vérifier les dépendances et les sauvegardes. Une CI verte ne constitue pas une validation de sécurité.
+> Le projet n'est pas encore prêt pour une exposition publique. L'accès privé et Redis sont intégrés techniquement, mais aucun Redis hébergé n'est encore configuré. Il reste notamment à protéger les connexions par IP et les clés IA stockées en clair, prévoir la rotation des mots de passe et vérifier les dépendances et les sauvegardes. Une CI verte ne constitue pas une validation de sécurité.
 
 ![Prime CRM](https://img.shields.io/badge/Stack-React%20%2B%20FastAPI%20%2B%20PostgreSQL-0ea5e9)
 ![License](https://img.shields.io/badge/License-MIT-green)
@@ -67,12 +67,13 @@
 ## 🏗️ Architecture technique
 
 ```
-Prime CRM/
-├── frontend/      React 18 + TypeScript + Vite + Tailwind + shadcn/ui + Recharts + DnD Kit
-├── backend/       FastAPI + SQLAlchemy 2 + Pydantic v2 + Alembic + JWT + fpdf2
-├── db/            PostgreSQL 16 + healthchecks + volumes persistants
-├── redis/         service local optionnel ; intégration applicative à faire
-└── docker-compose.yml + docker-compose.prod.yml
+PRIME-CRM/
+├── .github/workflows/ci.yml  CI GitHub Actions
+├── backend/                  FastAPI + SQLAlchemy + Alembic
+├── frontend/                 React + TypeScript + Vite
+├── docs/                     guides de sécurité et d'exploitation
+├── docker-compose.yml        PostgreSQL, Redis et application en local
+└── docker-compose.prod.yml   configuration Compose de production
 ```
 
 **Diagramme données (simplifié)** :
@@ -162,6 +163,8 @@ python -m venv venv && source venv/bin/activate  # venv\Scripts\activate sur Win
 pip install -r requirements.txt
 cp ../.env.example .env  # fichier ignoré par Git ; renseigner les secrets localement
 # APP_ENV=development et DATABASE_URL=sqlite:///./prime_crm.db dans backend/.env
+# Démarrer Redis en local sur 127.0.0.1:6379, ou vider REDIS_URL uniquement
+# en développement pour désactiver le cache et la limitation des connexions.
 alembic upgrade head
 python -m app.bootstrap
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
@@ -212,12 +215,13 @@ externe n'est pas garantie ; voir `docs/codecraftapi.md`.
 | `db` | postgres:16-alpine | 5432 | pgdata | pg_isready |
 | `backend` | python:3.11-slim + FastAPI | 8000 | backend_uploads | /health |
 | `frontend` | node:24 build → nginx:alpine | 80 | - | wget / |
-| `redis` | redis:7-alpine (profil `with-redis`) | 6379 | redisdata | redis-cli ping |
+| `redis` | redis:7-alpine | 6379 | redisdata | redis-cli ping |
 
 - **Volumes persistants** : `pgdata`, `redisdata`, `backend_uploads` ; ils ne remplacent pas une sauvegarde testée.
 - Les ports du Compose de développement sont liés à `127.0.0.1` par défaut.
 - **Réseau interne** : `prime-net` (bridge)
 - **Migrations** : `alembic upgrade head` avant `python -m app.bootstrap` et le serveur ; aucune création de schéma de secours si la migration échoue.
+- **Redis** : requis en production, utilisé pour le cache des étapes et la limitation par identifiant ; voir `docs/redis.md`.
 - **.env** : voir `.env.example` sans secrets
 
 ### Commandes usuelles
@@ -234,7 +238,7 @@ docker compose restart backend    # redémarrer backend seul
 
 ### Production `docker-compose.prod.yml`
 
-- Variables `POSTGRES_*` et `SECRET_KEY` obligatoires ; `FIRST_SUPERUSER_*` est requis uniquement lors de la première initialisation d'une base vide. Ne pas déployer avant les correctifs restants.
+- Variables `POSTGRES_*`, `SECRET_KEY` et `REDIS_URL` obligatoires ; `FIRST_SUPERUSER_*` est requis uniquement lors de la première initialisation d'une base vide. `REDIS_URL` doit utiliser TLS et une authentification. Ne pas déployer avant les correctifs restants.
 - `restart: always`, `workers: 2` pour Gunicorn/Uvicorn, pas de `reload`
 - HTTPS via un hébergeur ou un reverse proxy externe : configuration à définir et vérifier avant déploiement.
 
@@ -290,6 +294,7 @@ valeurs résolues ; les secrets ne doivent jamais être partagés.
 | `docs/ollama.md` | Installation Ollama, modèles conseillés, RAM, licences |
 | `docs/codecraftapi.md` | Config, GET /models, POST /chat/completions, quotas |
 | `docs/security.md` | Configuration privée et risques restant à traiter |
+| `docs/redis.md` | Cache, limitation des connexions et contraintes de l'offre gratuite |
 | `docs/backup.md` | Sauvegarde/restauration à planifier et valider |
 | `docs/deployment.md` | Prérequis avant le premier déploiement |
 | `docs/contributing.md` | Guide contribution, branches, commits |
@@ -307,10 +312,10 @@ valeurs résolues ; les secrets ne doivent jamais être partagés.
 
 ## ✅ Validation avant déploiement
 
-La CI vérifie le code et les migrations sur des bases jetables. Il reste à
-intégrer Redis, sécuriser les connexions et les clés IA, vérifier les
-sauvegardes et les dépendances, puis tester le cycle complet sur les services
-hébergés. Aucune exposition publique ne doit être déduite d'une CI verte.
+La CI vérifie le code, les migrations et Redis sur des services jetables. Il
+reste à configurer le Redis hébergé, renforcer les connexions et protéger les
+clés IA, vérifier les sauvegardes et les dépendances, puis tester le cycle
+complet sur les services hébergés. Aucune exposition publique ne doit être déduite d'une CI verte.
 
 Les changements sont publiés sur la branche de travail de la session. Aucune
 fusion vers `main` ni aucun déploiement n'est automatique à ce stade.

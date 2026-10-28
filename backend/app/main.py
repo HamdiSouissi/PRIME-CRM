@@ -14,6 +14,7 @@ settings.validate_runtime()
 from .database import SessionLocal
 from .models.user import User
 from .schema import require_current_schema
+from .services.redis_store import get_redis_store
 from .routers import activities, admin, ai, auth, clients, dashboard, imports_exports, opportunities, products, quotes, stages, users
 
 
@@ -63,7 +64,29 @@ def on_startup():
     if not has_users and not settings.ALLOW_PUBLIC_REGISTRATION:
         raise RuntimeError("Aucun utilisateur : initialisez d'abord le premier administrateur")
 
+    try:
+        store = get_redis_store()
+        if store is not None:
+            store.check_writable()
+        elif settings.APP_ENV == "production":
+            raise RuntimeError("Redis est requis")
+    except Exception:
+        # Connection errors may include the Redis URL and its credentials.
+        raise RuntimeError("Redis inaccessible ou non disponible en écriture") from None
+
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+
+
+@app.on_event("shutdown")
+def close_redis_connections():
+    try:
+        store = get_redis_store()
+        if store is not None:
+            store.close()
+    except Exception:
+        logger.warning("Could not close Redis connections cleanly")
+    finally:
+        get_redis_store.cache_clear()
 
 
 app.include_router(auth.router, prefix=settings.API_V1_STR)

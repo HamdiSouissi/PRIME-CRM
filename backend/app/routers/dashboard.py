@@ -12,6 +12,8 @@ from ..models.activity import Activity
 from ..models.quote import Quote
 from ..core.permissions import get_current_user
 from ..schemas.dashboard import DashboardStats, DashboardResponse
+from ..services.redis_store import RedisStore, get_redis_store
+from ..services.stage_cache import stage_outcome_ids
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -19,6 +21,7 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 def get_dashboard(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    store: RedisStore | None = Depends(get_redis_store),
     period: str = Query("month", regex="^(week|month|quarter|year|all)$"),
     owner_id: Optional[int] = None,
     start_date: Optional[date] = None,
@@ -54,9 +57,9 @@ def get_dashboard(
     opp_query = db.query(Opportunity).filter(Opportunity.company_id == company_id)
     if owner_id:
         opp_query = opp_query.filter(Opportunity.owner_id == owner_id)
-    # Need stages for won/lost
-    won_stage_ids = [s.id for s in db.query(PipelineStage).filter(PipelineStage.company_id==company_id, PipelineStage.is_won==True).all()]
-    lost_stage_ids = [s.id for s in db.query(PipelineStage).filter(PipelineStage.company_id==company_id, PipelineStage.is_lost==True).all()]
+    # A short-lived, encrypted cache stores IDs only, scoped to this company.
+    # The cache is never used to authorize a request or mutate an opportunity.
+    won_stage_ids, lost_stage_ids = stage_outcome_ids(db, company_id, store)
     
     opportunities = opp_query.all()
     opportunities_count = len(opportunities)

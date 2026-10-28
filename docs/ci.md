@@ -14,6 +14,10 @@ gratuits selon les conditions GitHub. Aucun service payant n'est créé.
 
 - **Backend, Python 3.11** : installation des dépendances, `pip check`, Ruff,
   tests pytest sur SQLite en mémoire et compilation des fichiers Python.
+- **Redis** : un conteneur Redis 7.2 jetable teste le cache chiffré, l'isolation
+  des entreprises, l'invalidation, la limitation concurrente, les pannes et la
+  vérification TLS locale. Les tests utilisent un préfixe aléatoire et ne
+  lancent jamais `FLUSHDB` ; aucun Redis hébergé n'est contacté.
 - **Migrations** : PostgreSQL 16 est créé pour le job, puis détruit. Le workflow
   teste `upgrade`, la répétition de `upgrade`, `alembic check`, `downgrade
   base`, un nouvel `upgrade` et un dernier `check`. Le `downgrade` est
@@ -36,9 +40,10 @@ Les tests frontend couvrent le client d'authentification et la connexion avec
 API simulée ; ils ne sont pas des tests de bout en bout. Les tests fonctionnels
 backend utilisent SQLite : PostgreSQL est vérifié pour les migrations et le
 bootstrap privé. Les tests historiques activent l'inscription uniquement dans
-leur processus de test isolé ; elle est interdite en production. Redis n'est
-pas encore intégré ni testé. La CI ne remplace pas une revue de sécurité ni un
-audit des dépendances avant exposition publique.
+leur processus de test isolé ; elle est interdite en production. Les tests Redis
+utilisent un service jetable et non le futur fournisseur hébergé. La CI ne
+remplace pas une revue de sécurité ni un audit des dépendances avant exposition
+publique.
 
 Ruff applique les règles de correction `E9` et `F`, mais ignore pour l'instant
 les imports et variables inutilisés (`F401`, `F841`) ; l'import `*` d'Alembic
@@ -84,6 +89,7 @@ try {
     Assert-CiExit
 
     # Forcer SQLite pour les tests, puis restaurer la variable précédente.
+    # Sans CI_TEST_REDIS_URL local jetable, les tests d'intégration Redis seront ignorés.
     $ancienneUrl = $env:DATABASE_URL
     try {
         $env:DATABASE_URL = "sqlite:///:memory:"
@@ -125,6 +131,50 @@ partie PostgreSQL et la construction de l'image sont vérifiées par GitHub
 Actions ; elles nécessitent Docker pour être reproduites localement. Ces
 commandes PowerShell sont fournies à titre pratique et n'ont pas été exécutées
 sur Windows dans cet environnement.
+
+### Tests Redis complets en local (facultatif, Docker Desktop requis)
+
+Après avoir installé les dépendances backend ci-dessus, depuis la racine du dépôt :
+
+```powershell
+$conteneur = 'primecrm-test-' + [guid]::NewGuid().ToString('N')
+$ancienneUrlRedisTest = $env:CI_TEST_REDIS_URL
+$ancienneUrlBase = $env:DATABASE_URL
+$demarre = $false
+try {
+    docker run --detach --rm --name $conteneur `
+        --publish '127.0.0.1:56379:6379' redis:7.2-alpine
+    if ($LASTEXITCODE -ne 0) { throw 'Impossible de démarrer le Redis de test.' }
+    $demarre = $true
+    $pret = $false
+    for ($i = 0; $i -lt 20; $i++) {
+        docker exec $conteneur redis-cli ping 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0) { $pret = $true; break }
+        Start-Sleep -Milliseconds 500
+    }
+    if (-not $pret) { throw 'Le Redis de test ne répond pas.' }
+    $env:CI_TEST_REDIS_URL = 'redis://127.0.0.1:56379/0'
+    $env:DATABASE_URL = 'sqlite:///:memory:'
+    Push-Location backend
+    try {
+        & '..\.venv\neon-migration\Scripts\python.exe' -m pytest -q app/tests
+        if ($LASTEXITCODE -ne 0) { throw 'Les tests backend ont échoué.' }
+    } finally { Pop-Location }
+} finally {
+    if ($demarre) { docker stop $conteneur | Out-Null }
+    if ($null -eq $ancienneUrlRedisTest) {
+        Remove-Item Env:CI_TEST_REDIS_URL -ErrorAction SilentlyContinue
+    } else { $env:CI_TEST_REDIS_URL = $ancienneUrlRedisTest }
+    if ($null -eq $ancienneUrlBase) {
+        Remove-Item Env:DATABASE_URL -ErrorAction SilentlyContinue
+    } else { $env:DATABASE_URL = $ancienneUrlBase }
+}
+```
+
+Le port `56379` doit être libre. Le conteneur est jetable et automatiquement
+supprimé à l'arrêt. Ne remplacez pas son URL par celle de votre futur Redis
+hébergé. Cette commande ne configure aucun fournisseur et ne déploie rien. Ce
+bloc PowerShell n'a pas été exécuté sur Windows dans cet environnement.
 
 Pour examiner les dépendances frontend après `npm ci`, exécuter `npm audit`
 puis `npm audit --omit=dev` dans `frontend/`. La CI actuelle ne bloque pas sur

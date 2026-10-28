@@ -35,8 +35,6 @@ services:
       retries: 5
     networks:
       - prime-net
-    profiles:
-      - with-redis
 
   backend:
     build: ./backend
@@ -45,9 +43,12 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       APP_ENV: development
       DATABASE_URL: postgresql://${POSTGRES_USER:-prime}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in an ignored .env file}@db:5432/${POSTGRES_DB:-primecrm}
+      REDIS_URL: redis://redis:6379/0
       SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in an ignored .env file}
       FIRST_SUPERUSER_EMAIL: ${FIRST_SUPERUSER_EMAIL:-}
       FIRST_SUPERUSER_PASSWORD: ${FIRST_SUPERUSER_PASSWORD:-}

@@ -26,6 +26,7 @@ services:
     environment:
       APP_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER:?Set POSTGRES_USER in the environment}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the environment}@db:5432/${POSTGRES_DB:-primecrm}
+      REDIS_URL: ${REDIS_URL:?Set an authenticated rediss URL in the environment}
       SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in the environment}
       FIRST_SUPERUSER_EMAIL: ${FIRST_SUPERUSER_EMAIL:-}
       FIRST_SUPERUSER_PASSWORD: ${FIRST_SUPERUSER_PASSWORD:-}

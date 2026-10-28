@@ -24,6 +24,7 @@ def test_cli_refuses_unmigrated_database_without_creating_tables(tmp_path):
         "PYTHONPATH": str(BACKEND_DIR),
         "APP_ENV": "development",
         "DATABASE_URL": f"sqlite:///{database_file.as_posix()}",
+        "REDIS_URL": "",
         "SECRET_KEY": secrets.token_urlsafe(48),
         "CORS_ORIGINS": "",
         "ALLOW_PUBLIC_REGISTRATION": "false",
@@ -47,6 +48,7 @@ def test_cli_bootstrap_after_migration_and_private_login(tmp_path):
     env.update({
         "APP_ENV": "development",
         "DATABASE_URL": f"sqlite:///{database_file.as_posix()}",
+        "REDIS_URL": "",
         "SECRET_KEY": secrets.token_urlsafe(48),
         "CORS_ORIGINS": "http://localhost:5173",
         "ALLOW_PUBLIC_REGISTRATION": "false",

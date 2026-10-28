@@ -76,7 +76,7 @@ def main() -> int:
     try:
         settings.validate_runtime()
     except ValueError:
-        print("Configuration invalide : vérifiez APP_ENV, SECRET_KEY, DATABASE_URL et CORS_ORIGINS", file=sys.stderr)
+        print("Configuration invalide : vérifiez APP_ENV, SECRET_KEY, DATABASE_URL, REDIS_URL et CORS_ORIGINS", file=sys.stderr)
         return 1
 
     try:

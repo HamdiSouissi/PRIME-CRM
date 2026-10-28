@@ -1,0 +1,299 @@
+"""Real Redis integration tests; only an explicitly selected local test server."""
+
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
+import json
+import os
+from pathlib import Path
+import secrets
+import select
+import socket
+import socketserver
+import ssl
+import threading
+import time
+from urllib.parse import urlsplit
+
+import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+from fastapi.testclient import TestClient
+from redis.exceptions import RedisError
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app.config import settings
+from app.database import Base, get_db
+from app.main import app
+from app.services.redis_store import (
+    CACHE_SECONDS,
+    LOGIN_ATTEMPTS,
+    LOGIN_WINDOW_SECONDS,
+    LoginRateLimited,
+    create_redis_store,
+    get_redis_store,
+)
+
+
+TEST_KEY = "test-only-signing-key-with-more-than-32-characters"
+TEST_PASSWORD = "test-only-user-password-9827"
+
+
+@pytest.fixture
+def redis_store():
+    # Never use REDIS_URL from the user's environment or an external provider.
+    url = os.environ.get("CI_TEST_REDIS_URL", "")
+    if not url:
+        if os.environ.get("CI", "").lower() == "true":
+            pytest.fail("CI_TEST_REDIS_URL must point to the disposable local Redis service")
+        pytest.skip("Set CI_TEST_REDIS_URL to an isolated local Redis to run integration tests")
+    try:
+        parsed = urlsplit(url)
+        safe = (
+            parsed.scheme == "redis"
+            and parsed.hostname == "127.0.0.1"
+            and parsed.port is not None and parsed.port >= 1024
+            and parsed.username is None and parsed.password is None
+            and parsed.path in {"", "/0"}
+            and not parsed.query and not parsed.fragment
+        )
+    except ValueError:
+        safe = False
+    if not safe:
+        pytest.fail("CI_TEST_REDIS_URL must be an unauthenticated loopback-only Redis URL")
+
+    prefix = f"primecrm-test-{secrets.token_hex(12)}"
+    store = create_redis_store(url, TEST_KEY, prefix)
+    store.check_writable()
+    try:
+        yield store
+    finally:
+        # Delete only keys under this run's random namespace; never FLUSHDB.
+        for key in store.client.scan_iter(match=f"{prefix}:*", count=100):
+            store.client.delete(key)
+        store.close()
+
+
+@pytest.fixture
+def api(redis_store, monkeypatch):
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine)
+
+    def override_db():
+        with factory() as db:
+            yield db
+
+    monkeypatch.setitem(app.dependency_overrides, get_db, override_db)
+    monkeypatch.setitem(app.dependency_overrides, get_redis_store, lambda: redis_store)
+    monkeypatch.setattr(settings, "ALLOW_PUBLIC_REGISTRATION", True)
+    client = TestClient(app)
+
+    def register(email, company):
+        response = client.post("/api/v1/auth/register", json={
+            "email": email,
+            "password": TEST_PASSWORD,
+            "first_name": "Test",
+            "last_name": "User",
+            "company_name": company,
+        })
+        assert response.status_code == 200, response.text
+        data = response.json()
+        return {"Authorization": "Bearer " + data["access_token"]}, data["user"]["company_id"]
+
+    first = register("first@example.com", "Tenant One")
+    second = register("second@example.com", "Tenant Two")
+    yield client, first, second
+    engine.dispose()
+
+
+def test_encrypted_cache_tenant_isolation_and_invalidation(redis_store, api):
+    client, (headers_a, company_a), (headers_b, company_b) = api
+    assert client.get("/api/v1/dashboard", headers=headers_a).status_code == 200
+    assert client.get("/api/v1/dashboard", headers=headers_b).status_code == 200
+    key_a = redis_store._stage_key(company_a)
+    key_b = redis_store._stage_key(company_b)
+    assert key_a != key_b
+    encrypted_a = redis_store.client.get(key_a)
+    assert encrypted_a and '"company_id"' not in encrypted_a and '"won"' not in encrypted_a
+    assert "first@example.com" not in key_a + encrypted_a
+    assert 0 < redis_store.client.ttl(key_a) <= CACHE_SECONDS
+    outcomes_a = redis_store.get_stage_outcomes(company_a)
+    outcomes_b = redis_store.get_stage_outcomes(company_b)
+    assert outcomes_a and outcomes_b and outcomes_a != outcomes_b
+
+    # Replaying one tenant's encrypted value under another key is rejected.
+    redis_store.client.set(key_b, encrypted_a, ex=CACHE_SECONDS)
+    assert redis_store.get_stage_outcomes(company_b) is None
+    assert client.get("/api/v1/dashboard", headers=headers_b).status_code == 200
+    assert redis_store.get_stage_outcomes(company_b) == outcomes_b
+
+    created = client.post("/api/v1/stages", headers=headers_a, json={"name": "Test won", "is_won": True})
+    assert created.status_code == 200
+    stage_id = created.json()["id"]
+    assert redis_store.client.get(key_a) is None
+    assert redis_store.get_stage_outcomes(company_b) == outcomes_b
+    assert client.get("/api/v1/dashboard", headers=headers_a).status_code == 200
+    assert stage_id in redis_store.get_stage_outcomes(company_a)[0]
+
+    changed = client.put(f"/api/v1/stages/{stage_id}", headers=headers_a, json={"is_won": False, "is_lost": True})
+    assert changed.status_code == 200
+    assert redis_store.client.get(key_a) is None
+    assert client.get("/api/v1/dashboard", headers=headers_a).status_code == 200
+    won, lost = redis_store.get_stage_outcomes(company_a)
+    assert stage_id not in won and stage_id in lost
+
+    assert client.delete(f"/api/v1/stages/{stage_id}", headers=headers_a).status_code == 200
+    assert redis_store.client.get(key_a) is None
+    assert client.get("/api/v1/dashboard", headers=headers_a).status_code == 200
+    assert stage_id not in redis_store.get_stage_outcomes(company_a)[1]
+    assert client.get("/api/v1/dashboard").status_code == 401
+    assert client.get("/api/v1/admin/health").status_code == 401
+    assert client.get("/api/v1/admin/health", headers=headers_a).status_code == 200
+
+
+def test_invalid_or_expired_ciphertext_is_a_cache_miss(redis_store):
+    company_id = 123
+    key = redis_store._stage_key(company_id)
+    redis_store.client.set(key, "not-a-fernet-token", ex=CACHE_SECONDS)
+    assert redis_store.get_stage_outcomes(company_id) is None
+    old = json.dumps({"company_id": company_id, "won": [1], "lost": [2]}).encode()
+    token = redis_store._cipher.encrypt_at_time(old, int(time.time()) - CACHE_SECONDS - 2)
+    redis_store.client.set(key, token, ex=CACHE_SECONDS)
+    assert redis_store.get_stage_outcomes(company_id) is None
+
+
+def test_rate_limit_is_atomic_across_concurrent_calls_and_repairs_ttl(redis_store):
+    email = "Mixed.Case@example.com"
+
+    def attempt(_):
+        try:
+            redis_store.record_login(email)
+            return True
+        except LoginRateLimited:
+            return False
+
+    with ThreadPoolExecutor(max_workers=20) as workers:
+        results = list(workers.map(attempt, range(30)))
+    assert sum(results) == LOGIN_ATTEMPTS
+    key = redis_store._login_key(email)
+    assert email not in key
+    assert redis_store._login_key(email.lower()) == key
+    assert 0 < redis_store.client.ttl(key) <= LOGIN_WINDOW_SECONDS
+    assert int(redis_store.client.get(key)) == 30
+
+    no_ttl_key = redis_store._login_key("no-ttl@example.com")
+    redis_store.client.set(no_ttl_key, "1")
+    assert redis_store.client.ttl(no_ttl_key) == -1
+    redis_store.record_login("no-ttl@example.com")
+    assert 0 < redis_store.client.ttl(no_ttl_key) <= LOGIN_WINDOW_SECONDS
+
+
+def test_both_login_routes_share_a_limit_and_other_accounts_are_unaffected(redis_store, api):
+    client, _, _ = api
+    email = "unknown@example.com"
+    for index in range(LOGIN_ATTEMPTS):
+        if index % 2:
+            response = client.post("/api/v1/auth/login", data={"username": email, "password": "incorrect"})
+        else:
+            response = client.post("/api/v1/auth/login-json", json={"email": email, "password": "incorrect"})
+        assert response.status_code == 401
+    blocked = client.post("/api/v1/auth/login-json", json={"email": email.upper(), "password": "incorrect"})
+    assert blocked.status_code == 429
+    assert int(blocked.headers["Retry-After"]) > 0
+    assert email not in blocked.text
+    other = client.post("/api/v1/auth/login-json", json={"email": "other@example.com", "password": "incorrect"})
+    assert other.status_code == 401
+    keys = list(redis_store.client.scan_iter(match=f"{redis_store.prefix}:login:*"))
+    assert len(keys) == 2
+    assert all("@" not in key and "incorrect" not in key for key in keys)
+
+
+def test_cache_falls_back_to_database_but_login_fails_closed_on_outage(redis_store, api, monkeypatch):
+    client, (headers, _), _ = api
+    broken = create_redis_store("redis://127.0.0.1:1/0", TEST_KEY, prefix=redis_store.prefix)
+    monkeypatch.setitem(app.dependency_overrides, get_redis_store, lambda: broken)
+    assert client.get("/api/v1/dashboard", headers=headers).status_code == 200
+    login = client.post("/api/v1/auth/login-json", json={"email": "first@example.com", "password": TEST_PASSWORD})
+    assert login.status_code == 503
+    assert TEST_PASSWORD not in login.text and "127.0.0.1" not in login.text
+    broken.close()
+
+
+class _TlsProxy(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+
+class _ProxyHandler(socketserver.BaseRequestHandler):
+    def handle(self):
+        try:
+            with self.server.tls_context.wrap_socket(self.request, server_side=True) as incoming:
+                with socket.create_connection(("127.0.0.1", self.server.redis_port), timeout=3) as upstream:
+                    while True:
+                        ready, _, _ = select.select([incoming, upstream], [], [], 3)
+                        if not ready:
+                            break
+                        for source in ready:
+                            data = source.recv(65536)
+                            if not data:
+                                return
+                            (upstream if source is incoming else incoming).sendall(data)
+        except (OSError, ssl.SSLError):
+            pass
+
+
+def _test_tls_material(tmp_path: Path) -> tuple[Path, Path, Path]:
+    now = datetime.now(timezone.utc)
+    ca_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Disposable Test CA")])
+    ca = (
+        x509.CertificateBuilder().subject_name(ca_name).issuer_name(ca_name)
+        .public_key(ca_key.public_key()).serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=1)).not_valid_after(now + timedelta(days=1))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(ca_key, hashes.SHA256())
+    )
+    leaf_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    leaf = (
+        x509.CertificateBuilder().subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")]))
+        .issuer_name(ca_name).public_key(leaf_key.public_key()).serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=1)).not_valid_after(now + timedelta(days=1))
+        .add_extension(x509.SubjectAlternativeName([x509.DNSName("localhost")]), critical=False)
+        .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
+        .sign(ca_key, hashes.SHA256())
+    )
+    ca_file, cert_file, key_file = (tmp_path / "ca.pem", tmp_path / "cert.pem", tmp_path / "key.pem")
+    ca_file.write_bytes(ca.public_bytes(serialization.Encoding.PEM))
+    cert_file.write_bytes(leaf.public_bytes(serialization.Encoding.PEM))
+    key_file.write_bytes(leaf_key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+    return ca_file, cert_file, key_file
+
+
+def test_tls_verifies_the_server_hostname(redis_store, tmp_path, monkeypatch):
+    ca_file, cert_file, key_file = _test_tls_material(tmp_path)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(certfile=cert_file, keyfile=key_file)
+    proxy = _TlsProxy(("127.0.0.1", 0), _ProxyHandler)
+    proxy.tls_context = context
+    proxy.redis_port = urlsplit(os.environ["CI_TEST_REDIS_URL"]).port
+    thread = threading.Thread(target=proxy.serve_forever, daemon=True)
+    thread.start()
+    monkeypatch.setenv("SSL_CERT_FILE", str(ca_file))
+    port = proxy.server_address[1]
+    good = create_redis_store(f"rediss://localhost:{port}/0", TEST_KEY, redis_store.prefix)
+    bad = create_redis_store(f"rediss://127.0.0.1:{port}/0", TEST_KEY, redis_store.prefix)
+    try:
+        assert good.client.ping() is True
+        # The CA is trusted, but 127.0.0.1 does not match the localhost-only SAN.
+        with pytest.raises(RedisError):
+            bad.client.ping()
+    finally:
+        good.close()
+        bad.close()
+        proxy.shutdown()
+        proxy.server_close()
+        thread.join(timeout=3)

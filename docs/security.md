@@ -1,9 +1,9 @@
 # Sécurité : état et prérequis
 
-> L'application n'est pas encore prête pour une exposition publique. La
-> limitation des tentatives de connexion, Redis, le stockage des clés IA, la
-> rotation des mots de passe et l'audit des dépendances restent à traiter. Ne
-> pas déployer publiquement sur la seule base de ces contrôles.
+> L'application n'est pas encore prête pour une exposition publique. Redis
+> est intégré techniquement mais aucun service hébergé n'est configuré. La
+> protection par adresse IP, le stockage des clés IA, la rotation des mots de
+> passe et l'audit des dépendances restent à traiter.
 
 ## Configuration du backend
 
@@ -12,6 +12,7 @@
 | `APP_ENV` | `production` par défaut. Utiliser explicitement `development` pour un poste local. |
 | `SECRET_KEY` | Secret JWT unique et aléatoire d'au moins 32 caractères ; aucune valeur par défaut. Le conserver stable et hors de Git. |
 | `DATABASE_URL` | URL PostgreSQL en production ; SQLite est réservé au développement et aux tests. |
+| `REDIS_URL` | Obligatoire en production : URL TCP `rediss://` authentifiée, avec vérification du certificat et du nom d'hôte. Ne jamais la partager. |
 | `CORS_ORIGINS` | Origines exactes séparées par des virgules ; vide signifie aucune origine cross-origin. En production, seules les origines HTTPS sont acceptées, sans `*` ni chemin. |
 | `ALLOW_PUBLIC_REGISTRATION` | `false` par défaut. La valeur `true` est refusée en production. |
 | `FIRST_SUPERUSER_EMAIL` | Email utilisé uniquement pour créer le tout premier administrateur. |
@@ -74,7 +75,9 @@ session avant l'exposition publique.
   ne pas y enregistrer de clé réelle avant correction.
 - Les URL des fournisseurs IA et les erreurs remontées par ces fournisseurs
   nécessitent une revue supplémentaire avant exposition.
-- Redis n'est pas encore utilisé par l'application et aucune limitation des
-  tentatives de connexion n'est en place.
+- La limitation Redis couvre les deux routes de connexion par identifiant,
+  pas par IP. Elle peut être utilisée pour bloquer temporairement un compte et
+  ne protège pas seule contre une attaque distribuée ou l'épuisement des quotas.
+  Voir [redis.md](redis.md).
 - Les tests actuels ne constituent pas un audit complet des permissions,
   dépendances, sauvegardes, restauration, ni de l'isolation entre entreprises.

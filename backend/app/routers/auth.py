@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
+from redis.exceptions import RedisError
 from datetime import timedelta, datetime, timezone
 
 from ..database import get_db
@@ -11,6 +12,7 @@ from ..core.security import verify_password, get_password_hash, create_access_to
 from ..core.permissions import get_current_user
 from ..config import settings
 from ..schemas.auth import LoginRequest, TokenResponse, UserResponse, RegisterRequest
+from ..services.redis_store import LoginRateLimited, RedisStore, get_redis_store
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -40,8 +42,30 @@ def ensure_default_stages(db: Session, company_id: int):
             db.add(stage)
         db.commit()
 
+def enforce_login_limit(identifier: str, store: RedisStore | None) -> None:
+    if len(identifier) > 320:
+        raise HTTPException(status_code=400, detail="Identifiants invalides")
+    if store is None:
+        # Redis may be absent only in explicit development/test environments.
+        if settings.APP_ENV == "production":
+            raise HTTPException(status_code=503, detail="Service de connexion temporairement indisponible")
+        return
+    try:
+        store.record_login(identifier)
+    except LoginRateLimited as exc:
+        raise HTTPException(
+            status_code=429,
+            detail="Trop de tentatives de connexion. Réessayez plus tard.",
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from None
+    except (RedisError, UnicodeError):
+        # Never bypass the limiter when the configured Redis is unavailable.
+        raise HTTPException(status_code=503, detail="Service de connexion temporairement indisponible") from None
+
+
 @router.post("/login", response_model=TokenResponse)
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db), store: RedisStore | None = Depends(get_redis_store)):
+    enforce_login_limit(form_data.username, store)
     user = db.query(User).filter(User.email == form_data.username).first()
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Email ou mot de passe incorrect")
@@ -72,7 +96,8 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     }
 
 @router.post("/login-json", response_model=TokenResponse)
-def login_json(payload: LoginRequest, db: Session = Depends(get_db)):
+def login_json(payload: LoginRequest, db: Session = Depends(get_db), store: RedisStore | None = Depends(get_redis_store)):
+    enforce_login_limit(payload.email, store)
     user = db.query(User).filter(User.email == payload.email).first()
     if not user or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Email ou mot de passe incorrect")

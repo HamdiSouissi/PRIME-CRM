@@ -28,6 +28,7 @@ def config(**values):
         "APP_ENV": "test",
         "SECRET_KEY": TEST_SIGNING_KEY,
         "DATABASE_URL": "sqlite:///:memory:",
+        "REDIS_URL": "rediss://default:ci-only@redis.example.invalid:6379/0",
         "CORS_ORIGINS": "",
         "ALLOW_PUBLIC_REGISTRATION": False,
     }
