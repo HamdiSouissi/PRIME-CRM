@@ -11,7 +11,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 
 from tools.netlify_preflight import PUBLIC_LOGIN_URL, SITE_HOST, SITE_ID
-from tools.netlify_privacy_diagnostic import describe_response, main
+from tools.netlify_privacy_diagnostic import describe_response, describe_unauthorized_body, main
 
 FAKE_SECRET = "fake-secret-do-not-output"
 GATE = "https://app.netlify.com/edge-access?" + urlencode(
@@ -51,10 +51,19 @@ class NetlifyPrivacyDiagnosticTests(unittest.TestCase):
         self.assertNotIn(FAKE_SECRET, summary)
         self.assertIn("match:0", summary)
 
+    def test_body_diagnostic_prints_only_fixed_flags(self) -> None:
+        body = f'<html><title>Login Redirect</title><script>window.location="{GATE}"</script>{FAKE_SECRET}</html>'.encode()
+        result = describe_unauthorized_body(body)
+        for flag in ("body_body", "body_html", "body_title", "body_script", "body_jsloc", "body_edge", "body_domain", "body_site", "body_inline"):
+            self.assertIn(f"{flag}:1", result)
+        self.assertIn("body_meta:0", result)
+        self.assertNotIn(FAKE_SECRET, result)
+        self.assertNotIn(GATE, result)
+
     def test_two_anonymous_gets_differ_only_by_user_agent(self) -> None:
         opener = Mock()
         opener.open.side_effect = [
-            HTTPError(PUBLIC_LOGIN_URL, 401, "unauthorized", {}, None),
+            HTTPError(PUBLIC_LOGIN_URL, 401, "unauthorized", {}, io.BytesIO(b"<html>Unauthorized</html>")),
             HTTPError(PUBLIC_LOGIN_URL, 302, "redirect", {"Location": GATE}, None),
         ]
         out = io.StringIO()

@@ -8,6 +8,8 @@ response body, headers, or exceptions.
 
 from __future__ import annotations
 
+import html
+import re
 from urllib.parse import parse_qs, urlsplit
 
 from tools.netlify_preflight import (
@@ -60,6 +62,26 @@ def describe_response(status: int, location: str) -> str:
     return f"HTTP:{status};{comparisons}"
 
 
+def describe_unauthorized_body(body: bytes) -> str:
+    """Describe only fixed patterns; do not print the potentially sensitive page."""
+    text = html.unescape(body.decode("utf-8", errors="replace")).replace("\\/", "/")
+    lower = text.lower()
+    inline_targets = re.findall(r"https://app\.netlify\.com/edge-access\?[^\s\"'<>\\()]*", text)
+    flags = {
+        "body": bool(body),
+        "html": "<html" in lower,
+        "title": bool(re.search(r"<title[^>]*>\s*login\s+redirect\s*</title\s*>", lower)),
+        "script": "<script" in lower,
+        "meta": bool(re.search(r"http-equiv\s*=\s*[\"']?refresh", lower)),
+        "jsloc": any(marker in lower for marker in ("window.location", "document.location", "location.href", "location.replace", "location.assign")),
+        "edge": "app.netlify.com/edge-access" in lower,
+        "domain": SITE_HOST in lower,
+        "site": SITE_ID in lower,
+        "inline": any(is_private_redirect(target) for target in inline_targets),
+    }
+    return ";".join(f"body_{name}:{int(value)}" for name, value in flags.items())
+
+
 def main() -> int:
     try:
         opener = make_opener()
@@ -69,8 +91,8 @@ def main() -> int:
         try:
             if opener is None:
                 raise RuntimeError("opener unavailable")
-            status, location = get_private_login_response(opener, user_agent=user_agent)
-            observation = describe_response(status, location)
+            status, location, body = get_private_login_response(opener, user_agent=user_agent)
+            observation = describe_response(status, location) + ";" + describe_unauthorized_body(body)
         except Exception:
             # The exception may contain network details. Never echo it.
             observation = "probe-error"

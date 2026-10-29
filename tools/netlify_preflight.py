@@ -25,6 +25,7 @@ SITE_API_URL = f"https://api.netlify.com/api/v1/sites/{SITE_ID}"
 PUBLIC_LOGIN_URL = f"https://{SITE_HOST}/login"
 _TIMEOUT_SECONDS = 20
 _MAX_RESPONSE_BYTES = 1_048_576
+_MAX_PRIVACY_BODY_BYTES = 65_536
 _PROBE_USER_AGENT = "prime-crm-read-only-preflight"
 # OAuth bearer-token characters, with no whitespace, control characters or URL.
 _TOKEN = re.compile(r"[A-Za-z0-9._~+/-]{8,510}={0,2}\Z", re.ASCII)
@@ -123,30 +124,39 @@ def is_private_redirect(location: str) -> bool:
     )
 
 
-def get_private_login_response(opener, *, user_agent: str = _PROBE_USER_AGENT) -> tuple[int, str]:
-    """Get /login without credentials, redirects, body logging, or retries."""
+def get_private_login_response(opener, *, user_agent: str = _PROBE_USER_AGENT) -> tuple[int, str, bytes]:
+    """Get /login without credentials, redirects, response logging, or retries."""
     request = Request(
         PUBLIC_LOGIN_URL,
         method="GET",
         headers={"Accept": "text/html", "Cache-Control": "no-cache", "User-Agent": user_agent},
     )
     try:
-        with opener.open(request, timeout=_TIMEOUT_SECONDS) as response:
+        try:
+            response = opener.open(request, timeout=_TIMEOUT_SECONDS)
+        except HTTPError as error:
+            response = error
+        with response:
             status = response.getcode()
-            location = response.headers.get("Location", "")
-    except HTTPError as error:
-        status = error.code
-        location = error.headers.get("Location", "") if error.headers is not None else ""
+            location = response.headers.get("Location", "") if response.headers is not None else ""
+            # Only an unauthorized page is inspected, and never recorded or printed.
+            body = response.read(_MAX_PRIVACY_BODY_BYTES + 1) if status == 401 else b""
     except Exception:
         raise PreflightError("The Netlify privacy probe failed or timed out") from None
-    if type(status) is not int or not 100 <= status <= 599 or not isinstance(location, str):
+    if (
+        type(status) is not int
+        or not 100 <= status <= 599
+        or not isinstance(location, str)
+        or not isinstance(body, bytes)
+        or len(body) > _MAX_PRIVACY_BODY_BYTES
+    ):
         raise PreflightError("The Netlify privacy probe returned an invalid response")
-    return status, location
+    return status, location, body
 
 
 def check_private_login(opener) -> None:
     """Require the expected redirect; an unrecognized response fails closed."""
-    status, location = get_private_login_response(opener)
+    status, location, _body = get_private_login_response(opener)
     if status not in (301, 302, 303, 307, 308) or not is_private_redirect(location):
         raise PreflightError("The Netlify private login redirect was not confirmed")
 
