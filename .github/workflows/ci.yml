@@ -218,3 +218,39 @@ jobs:
       - name: Check nginx configuration
         # Temporary container, no published ports and no application traffic.
         run: docker run --rm --add-host backend:127.0.0.1 prime-crm-frontend:ci nginx -t
+
+  production_guard_preview:
+    name: Production · contrôle TEST sans déploiement
+    # This is a rehearsal only, and only for a tested push to the designated branch.
+    # It deliberately does not reference the Render hook or any database secret.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/arena/a18b007f-prime-crm'
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment:
+      name: production
+      # Apply the environment's approval and branch rules without recording a
+      # fictitious deployment. No external production service is contacted.
+      deployment: false
+    steps:
+      - name: Check out the tested commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.11'
+
+      - name: Compare the Alembic fingerprint with the recorded baseline
+        env:
+          EXPECTED_ALEMBIC_FINGERPRINT: ${{ vars.PRODUCTION_ALEMBIC_FINGERPRINT }}
+        run: |
+          if [ -z "$EXPECTED_ALEMBIC_FINGERPRINT" ]; then
+            echo '::error::PRODUCTION_ALEMBIC_FINGERPRINT is missing from the production configuration.'
+            exit 1
+          fi
+          python tools/migration_fingerprint.py verify --commit "$GITHUB_SHA" --expected "$EXPECTED_ALEMBIC_FINGERPRINT"
+          echo 'TEST only: no deployment, migration, or production service was contacted.'

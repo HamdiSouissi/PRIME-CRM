@@ -89,10 +89,16 @@ Cette empreinte détecte les changements de fichiers Alembic, **elle ne vérifie
 pas la révision ou le schéma de la base** et ne prouve pas la compatibilité du
 code. Elle ne protège pas non plus contre des écritures effectuées par du code
 applicatif. Elle n'est pas encore reliée à un déploiement et ne constitue donc
-pas un garde-fou de production à elle seule. Quand elle sera intégrée au CD,
-sa référence devra être conservée séparément et ne devra être mise à jour
+pas un garde-fou de production à elle seule. Un job de répétition de la CI, sans
+accès à un hébergeur, la compare après approbation à la variable GitHub
+`PRODUCTION_ALEMBIC_FINGERPRINT` de l'environnement `production`. Il ne
+consulte ni secret de déploiement ni base de production et ne publie rien.
+
+La référence doit être conservée séparément et ne doit être mise à jour
 qu'après validation explicite et migration réellement vérifiée ; ne jamais la
-changer simplement pour contourner un échec.
+changer simplement pour contourner un échec. Pour tout futur CD, maintenir
+l'approbation des utilisateurs autorisés et arrêter le déploiement si la
+référence est absente ou différente.
 
 Le workflow [CI](../.github/workflows/ci.yml) teste les migrations sur une base
 PostgreSQL et Redis sur des services jetables ; il construit les images sans les

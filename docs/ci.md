@@ -7,6 +7,15 @@ permissions `contents: read`. Aucun secret GitHub, aucune URL Neon et aucune
 clé Redis ne sont nécessaires pour la CI. Les identifiants PostgreSQL visibles
 dans le workflow ne servent qu'au conteneur jetable du job.
 
+Pour les `push` sur `arena/a18b007f-prime-crm`, un job de **test sans
+déploiement** attend la réussite des deux jobs de CI, puis l'approbation de
+l'environnement GitHub `production`. Il compare l'empreinte Alembic du commit
+à la variable `PRODUCTION_ALEMBIC_FINGERPRINT` de cet environnement. Le job
+ne crée pas d'objet de déploiement GitHub et ne lit aucun secret, ne lance pas
+de migration et ne contacte aucun hébergeur. S'il manque une variable ou que
+l'empreinte diffère, le contrôle échoue. Cette répétition ne vérifie pas la base
+réelle et n'est pas encore un CD : voir [deployment.md](deployment.md).
+
 Pour ce dépôt public, les runners GitHub standards utilisés par le workflow sont
 gratuits selon les conditions GitHub. Aucun service payant n'est créé.
 
