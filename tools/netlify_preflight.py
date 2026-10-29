@@ -25,6 +25,7 @@ SITE_API_URL = f"https://api.netlify.com/api/v1/sites/{SITE_ID}"
 PUBLIC_LOGIN_URL = f"https://{SITE_HOST}/login"
 _TIMEOUT_SECONDS = 20
 _MAX_RESPONSE_BYTES = 1_048_576
+_PROBE_USER_AGENT = "prime-crm-read-only-preflight"
 # OAuth bearer-token characters, with no whitespace, control characters or URL.
 _TOKEN = re.compile(r"[A-Za-z0-9._~+/-]{8,510}={0,2}\Z", re.ASCII)
 
@@ -122,12 +123,12 @@ def is_private_redirect(location: str) -> bool:
     )
 
 
-def get_private_login_response(opener) -> tuple[int, str]:
+def get_private_login_response(opener, *, user_agent: str = _PROBE_USER_AGENT) -> tuple[int, str]:
     """Get /login without credentials, redirects, body logging, or retries."""
     request = Request(
         PUBLIC_LOGIN_URL,
         method="GET",
-        headers={"Accept": "text/html", "Cache-Control": "no-cache", "User-Agent": "prime-crm-read-only-preflight"},
+        headers={"Accept": "text/html", "Cache-Control": "no-cache", "User-Agent": user_agent},
     )
     try:
         with opener.open(request, timeout=_TIMEOUT_SECONDS) as response:

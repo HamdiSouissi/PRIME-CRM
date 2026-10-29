@@ -1,8 +1,9 @@
 """Anonymous, sanitized diagnostic for the Netlify /login privacy probe.
 
-This is not a release or a privacy guarantee. It sends one fixed GET with no
-credentials and does not follow redirects. Only a status and comparison flags
-are printed; never print the Location, response body, headers, or exceptions.
+This is not a release or a privacy guarantee. It sends two fixed GETs with no
+credentials and does not follow redirects. They differ only by User-Agent.
+Only statuses and comparison flags are printed; never print the Location,
+response body, headers, or exceptions.
 """
 
 from __future__ import annotations
@@ -12,9 +13,16 @@ from urllib.parse import parse_qs, urlsplit
 from tools.netlify_preflight import (
     SITE_HOST,
     SITE_ID,
+    _PROBE_USER_AGENT,
     get_private_login_response,
     is_private_redirect,
     make_opener,
+)
+
+
+_BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
 
 
@@ -54,14 +62,20 @@ def describe_response(status: int, location: str) -> str:
 
 def main() -> int:
     try:
-        status, location = get_private_login_response(make_opener())
-        observation = describe_response(status, location)
+        opener = make_opener()
     except Exception:
-        # The exception can contain response or network details. Do not echo it.
-        observation = "probe-error"
-    # The caller may capture this as a GitHub Actions output. It contains only
-    # literal names, integers and boolean flags, never response text or a URL.
-    print(f"observation={observation}")
+        opener = None
+    for name, user_agent in (("technical", _PROBE_USER_AGENT), ("browser", _BROWSER_USER_AGENT)):
+        try:
+            if opener is None:
+                raise RuntimeError("opener unavailable")
+            status, location = get_private_login_response(opener, user_agent=user_agent)
+            observation = describe_response(status, location)
+        except Exception:
+            # The exception may contain network details. Never echo it.
+            observation = "probe-error"
+        # Only literal names, integers and boolean flags, never response text.
+        print(f"{name}={observation}")
     return 0
 
 

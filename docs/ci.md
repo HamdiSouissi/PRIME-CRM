@@ -138,8 +138,9 @@ Inclure aussi `[skip render]` pour éviter toute demande Render lors de ce test.
 
 Pour diagnostiquer une réponse privée inattendue depuis le runner GitHub, un
 commit `[netlify diagnose] [skip render]` lance un job distinct **sans secret** :
-un seul GET anonyme de `/login`, sans suivre la redirection. Il affiche
-seulement le code HTTP et des indicateurs de correspondance ; ni URL de
+deux GET anonymes de `/login`, sans suivre la redirection, avec deux
+identifications de client (technique et navigateur). Il affiche seulement les
+codes HTTP et des indicateurs de correspondance ; ni URL de
 redirection, ni en-têtes, ni corps de réponse ne sont journalisés. Le succès du
 job indique que le diagnostic est terminé, pas que la confidentialité est
 validée. Ce job ne modifie rien et ne remplace pas le contrôle protégé.

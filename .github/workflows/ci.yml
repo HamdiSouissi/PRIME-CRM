@@ -341,7 +341,7 @@ jobs:
 
   netlify_privacy_diagnostic:
     name: Netlify · diagnostic anonyme de la réponse privée
-    # No secrets or deployment environment: inspect a single public GET only.
+    # No secrets or deployment environment: inspect two anonymous GETs only.
     if: >-
       github.event_name == 'push' &&
       github.repository == 'HamdiSouissi/PRIME-CRM' &&
@@ -361,13 +361,15 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Inspect one anonymous response, without following redirects
+      - name: Compare anonymous response types without following redirects
         id: probe
         run: python -m tools.netlify_privacy_diagnostic >> "$GITHUB_OUTPUT"
 
-      - name: "Observation · ${{ steps.probe.outputs.observation }}"
-        run: |
-          echo 'Diagnostic only: no secret, deployment, or configuration change.'
+      - name: "Sonde technique · ${{ steps.probe.outputs.technical }}"
+        run: echo 'Diagnostic only; this does not validate a release.'
+
+      - name: "Sonde navigateur · ${{ steps.probe.outputs.browser }}"
+        run: echo 'No secret, deployment, or configuration change.'
 
   netlify_readonly_preview:
     name: Netlify · vérification en lecture seule sans publication

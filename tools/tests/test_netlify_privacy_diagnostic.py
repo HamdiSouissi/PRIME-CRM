@@ -51,9 +51,12 @@ class NetlifyPrivacyDiagnosticTests(unittest.TestCase):
         self.assertNotIn(FAKE_SECRET, summary)
         self.assertIn("match:0", summary)
 
-    def test_one_anonymous_get_and_no_redirect_following(self) -> None:
+    def test_two_anonymous_gets_differ_only_by_user_agent(self) -> None:
         opener = Mock()
-        opener.open.side_effect = HTTPError(PUBLIC_LOGIN_URL, 302, "redirect", {"Location": GATE}, None)
+        opener.open.side_effect = [
+            HTTPError(PUBLIC_LOGIN_URL, 401, "unauthorized", {}, None),
+            HTTPError(PUBLIC_LOGIN_URL, 302, "redirect", {"Location": GATE}, None),
+        ]
         out = io.StringIO()
         with (
             patch.dict(os.environ, {"NETLIFY_AUTH_TOKEN": FAKE_SECRET}),
@@ -61,13 +64,18 @@ class NetlifyPrivacyDiagnosticTests(unittest.TestCase):
             contextlib.redirect_stdout(out),
         ):
             self.assertEqual(main(), 0)
-        opener.open.assert_called_once()
-        request = opener.open.call_args.args[0]
-        self.assertEqual(request.get_method(), "GET")
-        self.assertEqual(request.full_url, PUBLIC_LOGIN_URL)
-        self.assertIsNone(request.get_header("Authorization"))
-        self.assertEqual(opener.open.call_args.kwargs["timeout"], 20)
-        self.assertIn("HTTP:302", out.getvalue())
+        self.assertEqual(opener.open.call_count, 2)
+        first, second = [call.args[0] for call in opener.open.call_args_list]
+        for call, request in zip(opener.open.call_args_list, (first, second)):
+            self.assertEqual(request.get_method(), "GET")
+            self.assertEqual(request.full_url, PUBLIC_LOGIN_URL)
+            self.assertIsNone(request.get_header("Authorization"))
+            self.assertEqual(call.kwargs["timeout"], 20)
+        first_headers, second_headers = dict(first.header_items()), dict(second.header_items())
+        self.assertNotEqual(first_headers.pop("User-agent"), second_headers.pop("User-agent"))
+        self.assertEqual(first_headers, second_headers)
+        self.assertIn("technical=HTTP:401", out.getvalue())
+        self.assertIn("browser=HTTP:302", out.getvalue())
         self.assertIn("match:1", out.getvalue())
         self.assertNotIn(FAKE_SECRET, out.getvalue())
         self.assertNotIn(GATE, out.getvalue())
@@ -78,8 +86,8 @@ class NetlifyPrivacyDiagnosticTests(unittest.TestCase):
         out = io.StringIO()
         with patch("tools.netlify_privacy_diagnostic.make_opener", return_value=opener), contextlib.redirect_stdout(out):
             self.assertEqual(main(), 0)
-        opener.open.assert_called_once()
-        self.assertEqual(out.getvalue(), "observation=probe-error\n")
+        self.assertEqual(opener.open.call_count, 2)  # One attempt per distinct user agent.
+        self.assertEqual(out.getvalue(), "technical=probe-error\nbrowser=probe-error\n")
         self.assertNotIn(FAKE_SECRET, out.getvalue())
 
 
