@@ -1,9 +1,10 @@
 # Déploiement : préparation en cours
 
-**Ne pas exposer publiquement le projet pour l'instant.** Redis est intégré
-mais aucun service hébergé n'est configuré. La protection par IP, les clés IA,
-la rotation des mots de passe, les sauvegardes et l'audit des dépendances
-restent à traiter. Aucun CD Render ou frontend n'est configuré à ce stade.
+**Ne pas exposer publiquement le projet pour l'instant.** Redis est intégré,
+mais son raccordement au déploiement reste à valider. La protection par IP,
+la revue des destinations IA, la rotation des mots de passe, les sauvegardes
+et l'audit des dépendances restent à traiter. Aucun CD Render ou frontend
+n'est configuré à ce stade.
 
 Le backend doit utiliser `APP_ENV=production`, une `SECRET_KEY` aléatoire et
 persistante, une URL PostgreSQL, une URL Redis TLS authentifiée et des origines

@@ -10,4 +10,12 @@ restauration complète sur une base jetable distincte. Ne jamais restaurer ni
 exécuter une migration sur une base réelle sans avoir vérifié et confirmé sa
 cible. Les commandes de restauration peuvent écraser des données.
 
+Les nouvelles clés IA sont chiffrées avec une clé dérivée de `SECRET_KEY` et
+liée aux identifiants de l'entreprise et du fournisseur. Pour restaurer ces
+clés, la restauration doit conserver ces identifiants ainsi que le même
+`SECRET_KEY`, conservé séparément dans un gestionnaire de secrets. Les anciennes
+sauvegardes peuvent contenir des clés IA en clair : les protéger et révoquer
+chez le fournisseur toute clé qui aurait été exposée. La perte ou la rotation
+non planifiée de `SECRET_KEY` rend les clés chiffrées illisibles.
+
 Ne commiter ni dump, ni fichier `.env`, ni URL contenant un mot de passe.

@@ -11,18 +11,25 @@ from ..models.ai_provider import AIProviderConfig
 from ..models.activity import Activity
 from ..core.permissions import get_current_user, require_admin
 from ..schemas.ai import AIProviderCreate, AIProviderUpdate, AIProviderResponse, AITestRequest, AITestResponse, AIGenerateRequest, AIGenerateResponse, AISummaryRequest, AIExtractRequest
-from ..services.ai_service.manager import AIServiceManager
+from ..services.ai_service.credentials import (
+    AICredentialError, CREDENTIAL_ERROR, credential_needs_reset, decrypt_credential, encrypt_credential,
+)
+from ..services.ai_service.manager import AIServiceError, AIServiceManager
+from ..services.ai_service.provider_urls import (
+    AIProviderURLError, DEFAULT_OPENAI_BASE_URL, response_url, validate_openai_base_url,
+)
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
-def mask_key(key: str) -> str:
-    if not key:
-        return None
-    if len(key) <= 8:
-        return "***"
-    return key[:4] + "***" + key[-4:]
 
 def to_response(cfg: AIProviderConfig):
+    # Old versions persisted provider error bodies verbatim. Never return those
+    # legacy messages or fragments of a credential, even to an administrator.
+    last_message = None
+    if cfg.last_test_status == "success":
+        last_message = "Connexion réussie."
+    elif cfg.last_test_status == "failed":
+        last_message = "Test échoué : vérifiez la configuration."
     return {
         "id": cfg.id,
         "company_id": cfg.company_id,
@@ -30,10 +37,11 @@ def to_response(cfg: AIProviderConfig):
         "name": cfg.name,
         "is_active": cfg.is_active,
         "is_default": cfg.is_default,
-        "ollama_url": cfg.ollama_url,
+        "ollama_url": response_url(cfg.ollama_url),
         "ollama_model": cfg.ollama_model,
-        "api_base_url": cfg.api_base_url,
-        "api_key_masked": mask_key(cfg.api_key_encrypted),
+        "api_base_url": response_url(cfg.api_base_url),
+        "api_key_masked": "***" if cfg.api_key_encrypted else None,
+        "api_key_needs_reset": credential_needs_reset(cfg.api_key_encrypted, cfg.company_id, cfg.id),
         "model_id": cfg.model_id,
         "temperature": cfg.temperature,
         "max_tokens": cfg.max_tokens,
@@ -41,7 +49,7 @@ def to_response(cfg: AIProviderConfig):
         "feature_mapping": json.loads(cfg.feature_mapping) if cfg.feature_mapping else None,
         "last_test_at": cfg.last_test_at,
         "last_test_status": cfg.last_test_status,
-        "last_test_message": cfg.last_test_message,
+        "last_test_message": last_message,
         "created_at": cfg.created_at
     }
 
@@ -52,12 +60,15 @@ def list_providers(db: Session = Depends(get_db), current_user: User = Depends(g
 
 @router.post("/providers", response_model=AIProviderResponse)
 def create_provider(payload: AIProviderCreate, db: Session = Depends(get_db), current_user: User = Depends(require_admin)):
-    # encrypt api_key simply (base64-like obscuring, in prod use proper encryption)
-    api_key_encrypted = payload.api_key
-    # if marking default, unset others
+    if payload.provider != "ollama":
+        try:
+            validate_openai_base_url(payload.api_base_url)
+        except AIProviderURLError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
     if payload.is_default:
         db.query(AIProviderConfig).filter(AIProviderConfig.company_id==current_user.company_id).update({AIProviderConfig.is_default: False})
-    
+
     cfg = AIProviderConfig(
         company_id=current_user.company_id,
         provider=payload.provider,
@@ -67,14 +78,23 @@ def create_provider(payload: AIProviderCreate, db: Session = Depends(get_db), cu
         ollama_url=payload.ollama_url,
         ollama_model=payload.ollama_model,
         api_base_url=payload.api_base_url,
-        api_key_encrypted=api_key_encrypted,
         model_id=payload.model_id,
         temperature=payload.temperature,
         max_tokens=payload.max_tokens,
         timeout_seconds=payload.timeout_seconds,
         feature_mapping=json.dumps(payload.feature_mapping) if payload.feature_mapping else None
     )
-    db.add(cfg); db.commit(); db.refresh(cfg)
+    db.add(cfg)
+    # Bind the ciphertext to this provider's ID, within the same transaction.
+    # The unencrypted input is never assigned to a database column.
+    db.flush()
+    try:
+        cfg.api_key_encrypted = encrypt_credential(payload.api_key, cfg.company_id, cfg.id)
+    except AICredentialError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    db.commit()
+    db.refresh(cfg)
     return to_response(cfg)
 
 @router.put("/providers/{provider_id}", response_model=AIProviderResponse)
@@ -84,8 +104,29 @@ def update_provider(provider_id: int, payload: AIProviderUpdate, db: Session = D
         raise HTTPException(status_code=404, detail="Fournisseur non trouvé")
     
     data = payload.model_dump(exclude_unset=True)
+    url_changed = False
+    if cfg.provider != "ollama":
+        try:
+            # Permit repairing an unsafe URL saved by an older version.
+            old_url = (cfg.api_base_url or DEFAULT_OPENAI_BASE_URL).rstrip("/")
+            new_url = validate_openai_base_url(data.get("api_base_url", cfg.api_base_url))
+        except AIProviderURLError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        url_changed = old_url != new_url
+        if url_changed and cfg.api_key_encrypted and "api_key" not in data:
+            raise HTTPException(
+                status_code=400,
+                detail="Pour changer l'URL, remplacez ou supprimez aussi la clé API enregistrée.",
+            )
     if "api_key" in data:
-        cfg.api_key_encrypted = data.pop("api_key")
+        try:
+            cfg.api_key_encrypted = encrypt_credential(data.pop("api_key"), cfg.company_id, cfg.id)
+        except AICredentialError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        # Previous versions may have persisted sensitive error bodies here.
+        cfg.last_test_at = cfg.last_test_status = cfg.last_test_message = None
+    elif url_changed:
+        cfg.last_test_at = cfg.last_test_status = cfg.last_test_message = None
     if "feature_mapping" in data and data["feature_mapping"] is not None:
         cfg.feature_mapping = json.dumps(data.pop("feature_mapping"))
         # remaining fields
@@ -109,104 +150,121 @@ def delete_provider(provider_id: int, db: Session = Depends(get_db), current_use
     db.delete(cfg); db.commit()
     return {"message": "Fournisseur supprimé"}
 
+def _record_test(db: Session, cfg: AIProviderConfig | None, status: str, message: str) -> None:
+    if cfg:
+        cfg.last_test_at = datetime.now(timezone.utc)
+        cfg.last_test_status = status
+        cfg.last_test_message = message
+        db.commit()
+
+
+def _safe_models(items, field: str, secret: str | None = None) -> list[str]:
+    """Do not echo a credential if a provider mistakenly includes it in an ID."""
+    if not isinstance(items, list):
+        return []
+    names = []
+    for item in items[:1000]:
+        name = item.get(field) if isinstance(item, dict) else None
+        if isinstance(name, str) and len(name) <= 256 and (not secret or secret not in name):
+            names.append(name)
+    return names
+
+
 @router.post("/providers/test", response_model=AITestResponse)
-async def test_provider(payload: AITestRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def test_provider(payload: AITestRequest, db: Session = Depends(get_db), current_user: User = Depends(require_admin)):
     start = time.time()
-    manager = AIServiceManager(db, current_user.company_id)
-    
-    # if provider_id provided, load config
     cfg = None
-    if payload.provider_id:
-        cfg = db.query(AIProviderConfig).filter(AIProviderConfig.id==payload.provider_id, AIProviderConfig.company_id==current_user.company_id).first()
+    if payload.provider_id is not None:
+        cfg = db.query(AIProviderConfig).filter(AIProviderConfig.id == payload.provider_id, AIProviderConfig.company_id == current_user.company_id).first()
         if not cfg:
             raise HTTPException(status_code=404, detail="Fournisseur non trouvé")
-    
+        # A saved credential may only be sent to its saved provider URL. The
+        # previous endpoint allowed any user to override this URL in a request.
+        if payload.provider is not None and payload.provider != cfg.provider:
+            raise HTTPException(status_code=400, detail="Utilisez le fournisseur enregistré pour ce test.")
+        saved_api_url = (cfg.api_base_url or DEFAULT_OPENAI_BASE_URL).rstrip("/")
+        saved_ollama_url = (cfg.ollama_url or "http://host.docker.internal:11434").rstrip("/")
+        if payload.api_base_url is not None and payload.api_base_url.rstrip("/") != saved_api_url:
+            raise HTTPException(status_code=400, detail="Utilisez l'URL enregistrée pour ce test.")
+        if payload.ollama_url is not None and payload.ollama_url.rstrip("/") != saved_ollama_url:
+            raise HTTPException(status_code=400, detail="Utilisez l'URL enregistrée pour ce test.")
+
     try:
-        if payload.provider == "ollama" or (cfg and cfg.provider == "ollama"):
-            url = payload.ollama_url or (cfg.ollama_url if cfg else "http://host.docker.internal:11434")
-            model = payload.ollama_model or (cfg.ollama_model if cfg else "llama3.2")
+        is_ollama = cfg.provider == "ollama" if cfg else payload.provider == "ollama"
+        if is_ollama:
+            url = (cfg.ollama_url if cfg else payload.ollama_url) or "http://host.docker.internal:11434"
             async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.get(f"{url.rstrip('/')}/api/tags")
-                if resp.status_code == 200:
-                    data = resp.json()
-                    models = [m["name"] for m in data.get("models", [])]
-                    latency = int((time.time()-start)*1000)
-                    # update last test if cfg
-                    if cfg:
-                        cfg.last_test_at = datetime.now(timezone.utc)
-                        cfg.last_test_status = "success"
-                        cfg.last_test_message = f"Connexion OK, {len(models)} modèles"
-                        db.commit()
-                    return {"success": True, "message": f"Ollama accessible, {len(models)} modèles disponibles", "models": models, "latency_ms": latency}
-                else:
-                    raise HTTPException(status_code=400, detail=f"Ollama erreur {resp.status_code}")
+            if resp.status_code == 200:
+                models = _safe_models(resp.json().get("models", []), "name")
+                _record_test(db, cfg, "success", "Connexion réussie.")
+                return {"success": True, "message": f"Ollama accessible, {len(models)} modèles disponibles", "models": models, "latency_ms": int((time.time()-start)*1000)}
         else:
-            # CodeCraftAPI / OpenAI compatible
-            base_url = payload.api_base_url or (cfg.api_base_url if cfg else "https://www.codecraftapi.com/v1")
-            api_key = payload.api_key or (cfg.api_key_encrypted if cfg else None)
+            base_url = validate_openai_base_url(cfg.api_base_url if cfg else payload.api_base_url)
+            api_key = payload.api_key or (decrypt_credential(cfg.api_key_encrypted, cfg.company_id, cfg.id) if cfg else None)
             if not api_key:
                 raise HTTPException(status_code=400, detail="Clé API manquante")
-            headers = {"Authorization": f"Bearer {api_key}"}
             async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get(f"{base_url.rstrip('/')}/models", headers=headers)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    models = [m["id"] for m in data.get("data", [])] if "data" in data else []
-                    latency = int((time.time()-start)*1000)
-                    if cfg:
-                        cfg.last_test_at = datetime.now(timezone.utc)
-                        cfg.last_test_status = "success"
-                        cfg.last_test_message = "Connexion OK"
-                        db.commit()
-                    return {"success": True, "message": "Connexion réussie", "models": models, "latency_ms": latency}
-                else:
-                    body = resp.text[:500]
-                    if cfg:
-                        cfg.last_test_at = datetime.now(timezone.utc)
-                        cfg.last_test_status = "failed"
-                        cfg.last_test_message = body
-                        db.commit()
-                    return {"success": False, "message": f"Erreur {resp.status_code}: {body}", "models": None, "latency_ms": int((time.time()-start)*1000)}
-    except httpx.ConnectError as e:
-        if cfg:
-            cfg.last_test_at = datetime.now(timezone.utc)
-            cfg.last_test_status = "failed"
-            cfg.last_test_message = str(e)[:500]
-            db.commit()
-        return {"success": False, "message": f"Impossible de se connecter: {str(e)} — Vérifiez l'URL (en Docker, utilisez host.docker.internal pour Ollama)", "models": None, "latency_ms": int((time.time()-start)*1000)}
-    except Exception as e:
-        return {"success": False, "message": str(e), "models": None, "latency_ms": int((time.time()-start)*1000)}
+                resp = await client.get(f"{base_url}/models", headers={"Authorization": f"Bearer {api_key}"})
+            if resp.status_code == 200:
+                models = _safe_models(resp.json().get("data", []), "id", api_key)
+                _record_test(db, cfg, "success", "Connexion réussie.")
+                return {"success": True, "message": "Connexion réussie", "models": models, "latency_ms": int((time.time()-start)*1000)}
+
+        # Provider responses and exceptions may echo credentials. Persist and
+        # return only fixed text and an HTTP status code, never response bodies.
+        message = f"Le fournisseur IA a répondu avec le code HTTP {resp.status_code}."
+        _record_test(db, cfg, "failed", message)
+        return {"success": False, "message": message, "models": None, "latency_ms": int((time.time()-start)*1000)}
+    except HTTPException:
+        raise
+    except AICredentialError:
+        _record_test(db, cfg, "failed", CREDENTIAL_ERROR)
+        return {"success": False, "message": CREDENTIAL_ERROR, "models": None, "latency_ms": int((time.time()-start)*1000)}
+    except AIProviderURLError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    except httpx.RequestError:
+        message = "Impossible de joindre le fournisseur IA. Vérifiez sa configuration."
+        _record_test(db, cfg, "failed", message)
+        return {"success": False, "message": message, "models": None, "latency_ms": int((time.time()-start)*1000)}
+    except Exception:
+        message = "Le test du fournisseur IA a échoué. Vérifiez sa configuration."
+        _record_test(db, cfg, "failed", message)
+        return {"success": False, "message": message, "models": None, "latency_ms": int((time.time()-start)*1000)}
+
 
 @router.get("/providers/{provider_id}/models")
-async def get_models(provider_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    cfg = db.query(AIProviderConfig).filter(AIProviderConfig.id==provider_id, AIProviderConfig.company_id==current_user.company_id).first()
+async def get_models(provider_id: int, db: Session = Depends(get_db), current_user: User = Depends(require_admin)):
+    cfg = db.query(AIProviderConfig).filter(AIProviderConfig.id == provider_id, AIProviderConfig.company_id == current_user.company_id).first()
     if not cfg:
         raise HTTPException(status_code=404, detail="Fournisseur non trouvé")
-    
-    if cfg.provider == "ollama":
-        try:
+
+    try:
+        if cfg.provider == "ollama":
+            url = cfg.ollama_url or "http://host.docker.internal:11434"
             async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get(f"{cfg.ollama_url.rstrip('/')}/api/tags")
-                if resp.status_code == 200:
-                    data = resp.json()
-                    return {"models": [m["name"] for m in data.get("models", [])]}
-                return {"models": [], "error": resp.text}
-        except Exception as e:
-            return {"models": [], "error": str(e)}
-    else:
-        if not cfg.api_key_encrypted:
-            raise HTTPException(status_code=400, detail="Clé API manquante")
-        try:
+                resp = await client.get(f"{url.rstrip('/')}/api/tags")
+            if resp.status_code == 200:
+                return {"models": _safe_models(resp.json().get("models", []), "name")}
+        else:
+            base_url = validate_openai_base_url(cfg.api_base_url)
+            api_key = decrypt_credential(cfg.api_key_encrypted, cfg.company_id, cfg.id)
+            if not api_key:
+                raise HTTPException(status_code=400, detail="Clé API manquante")
             async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get(f"{cfg.api_base_url.rstrip('/')}/models", headers={"Authorization": f"Bearer {cfg.api_key_encrypted}"})
-                if resp.status_code == 200:
-                    data = resp.json()
-                    return {"models": [m["id"] for m in data.get("data", [])]}
-                raise HTTPException(status_code=400, detail=resp.text)
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=str(e))
+                resp = await client.get(f"{base_url}/models", headers={"Authorization": f"Bearer {api_key}"})
+            if resp.status_code == 200:
+                return {"models": _safe_models(resp.json().get("data", []), "id", api_key)}
+        raise HTTPException(status_code=400, detail=f"Le fournisseur IA a répondu avec le code HTTP {resp.status_code}.")
+    except HTTPException:
+        raise
+    except AICredentialError:
+        raise HTTPException(status_code=400, detail=CREDENTIAL_ERROR) from None
+    except AIProviderURLError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    except Exception:
+        raise HTTPException(status_code=400, detail="Impossible de récupérer les modèles IA. Vérifiez la configuration.") from None
+
 
 @router.post("/generate", response_model=AIGenerateResponse)
 async def generate(payload: AIGenerateRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -221,8 +279,10 @@ async def generate(payload: AIGenerateRequest, db: Session = Depends(get_db), cu
             context=payload.context
         )
         return result
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except AIServiceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    except Exception:
+        raise HTTPException(status_code=500, detail="Erreur interne du service IA.") from None
 
 @router.post("/summary/client", response_model=AIGenerateResponse)
 async def summarize_client(payload: AISummaryRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -259,7 +319,7 @@ Opportunités ({len(opps)}):
         if opps:
             total = sum(o.amount or 0 for o in opps)
             fallback += f"Valeur totale des opportunités: {total} TND\n"
-        fallback += "\n*Généré sans IA (aucun fournisseur configuré) - Configurez Ollama ou CodeCraftAPI dans Paramètres > IA*"
+        fallback += "\n*Généré sans IA (fournisseur indisponible ou non configuré) - Configurez Ollama ou CodeCraftAPI dans Paramètres > IA*"
         return {"content": fallback, "provider": "fallback", "model": "rule-based", "is_verified": False}
 
 @router.post("/extract", response_model=AIGenerateResponse)
@@ -276,8 +336,10 @@ Réponds uniquement avec le JSON."""
     try:
         result = await manager.generate(prompt=prompt, feature="extraction", context={})
         return result
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except AIServiceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    except Exception:
+        raise HTTPException(status_code=500, detail="Erreur interne du service IA.") from None
 
 @router.post("/draft/email", response_model=AIGenerateResponse)
 async def draft_email(payload: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -295,8 +357,10 @@ L'email doit être: professionnel, concis, avec objet et corps. Ne pas inventer 
     try:
         result = await manager.generate(prompt=prompt, feature="email_draft", context=payload)
         return result
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except AIServiceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    except Exception:
+        raise HTTPException(status_code=500, detail="Erreur interne du service IA.") from None
 
 @router.get("/health")
 def ai_health(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):

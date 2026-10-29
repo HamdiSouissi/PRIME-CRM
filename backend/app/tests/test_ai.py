@@ -55,7 +55,8 @@ def test_ai_provider_crud():
         "model_id": "gpt-4o-mini"
     }, headers=h)
     assert resp.status_code == 200
-    assert resp.json()["api_key_masked"] == "sk-t***6789"
+    assert resp.json()["api_key_masked"] == "***"
+    assert resp.json()["api_key_needs_reset"] is False
     # update
     resp = client.put(f"/api/v1/ai/providers/{pid}", json={"is_active": False}, headers=h)
     assert resp.status_code == 200

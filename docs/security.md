@@ -1,9 +1,9 @@
 # Sécurité : état et prérequis
 
 > L'application n'est pas encore prête pour une exposition publique. Redis
-> est intégré techniquement mais aucun service hébergé n'est configuré. La
-> protection par adresse IP, le stockage des clés IA, la rotation des mots de
-> passe et l'audit des dépendances restent à traiter.
+> est intégré techniquement ; son raccordement au déploiement reste à valider.
+> La protection par adresse IP, la revue des destinations IA, la rotation des
+> mots de passe et l'audit des dépendances restent notamment à traiter.
 
 ## Configuration du backend
 
@@ -69,12 +69,49 @@ schéma. La modification du mot de passe dans l'interface n'est pas encore
 implémentée ; il faut prévoir une procédure de rotation et de révocation de
 session avant l'exposition publique.
 
+## Clés des fournisseurs IA
+
+Les **nouvelles** clés IA sont chiffrées et authentifiées avant leur écriture
+sur `ai_provider_configs.api_key_encrypted` (Fernet). Une clé propre à chaque
+entreprise et fournisseur est dérivée de `SECRET_KEY` par HMAC-SHA256 avec un
+contexte distinct de ceux du cache et des jetons. Le champ de réponse
+`api_key_masked` affiche seulement `***`, sans fragment de clé. Le déchiffrement
+n'a lieu que pour appeler
+le fournisseur configuré ou vérifier l'état de la clé.
+
+Ce chiffrement protège contre la lecture directe d'une sauvegarde ou d'une
+base de données seule, pas contre une compromission du serveur qui possède
+`SECRET_KEY`. Il n'ajoute aucune variable d'environnement. Conserver cette clé
+stable et en lieu sûr : la perdre ou la remplacer rend les clés IA illisibles
+et invalide les jetons. La restauration de clés chiffrées exige le même secret
+et les mêmes identifiants d'entreprise et de fournisseur. Une procédure de
+rotation/réchiffrement n'est pas encore fournie.
+
+Les anciennes clés en clair, les données altérées et les clés chiffrées avec
+un autre `SECRET_KEY` sont refusées, sans conversion automatique ni envoi au
+fournisseur. L'interface signale qu'une clé doit être remplacée : un admin peut
+supprimer et recréer le fournisseur, ou utiliser l'API pour remplacer sa clé.
+Les anciennes clés en clair peuvent aussi subsister dans les sauvegardes et les
+anciens messages ; les révoquer chez leur fournisseur et protéger les anciennes
+copies. Le déploiement de cette modification ne convertit ni n'efface les
+anciennes clés automatiquement.
+
+Les tests et la récupération de modèles sont réservés aux admins. Un test d'un
+fournisseur enregistré ne peut pas remplacer son URL ; changer l'URL d'un
+fournisseur ayant une clé impose de remplacer ou supprimer cette clé au même
+moment. Les URL OpenAI-compatibles exigent HTTPS en production et ne doivent
+pas contenir d'identifiants, de paramètres ni de fragment. Les réponses
+extérieures et exceptions ne sont plus reproduites dans les messages d'erreur.
+
+**Limite importante :** ces mesures ne constituent pas une protection SSRF
+complète. Les destinations réseau et les URL Ollama doivent encore être
+revues ; ne pas enregistrer de clé IA réelle ni exposer le CRM avant cette revue.
+Les fournisseurs IA externes peuvent être payants.
+
 ## Limitations connues
 
-- Les clés IA sont actuellement stockées en clair malgré le nom de la colonne ;
-  ne pas y enregistrer de clé réelle avant correction.
-- Les URL des fournisseurs IA et les erreurs remontées par ces fournisseurs
-  nécessitent une revue supplémentaire avant exposition.
+- Les destinations réseau et URL des fournisseurs IA nécessitent une revue
+  supplémentaire avant exposition, y compris contre les attaques SSRF.
 - La limitation Redis couvre les deux routes de connexion par identifiant,
   pas par IP. Elle peut être utilisée pour bloquer temporairement un compte et
   ne protège pas seule contre une attaque distribuée ou l'épuisement des quotas.

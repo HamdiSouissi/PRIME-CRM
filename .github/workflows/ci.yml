@@ -91,6 +91,12 @@ jobs:
           alembic upgrade head
           alembic check
 
+      - name: Test AI credential encryption on disposable PostgreSQL
+        # Loopback service container only; fake keys and a mocked AI provider.
+        env:
+          CI_TEST_POSTGRES_URL: postgresql://ci:ci-only-password@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/primecrm_ci
+        run: python -m pytest -q app/tests/test_ai_postgresql.py
+
       - name: Test private bootstrap on disposable PostgreSQL
         env:
           APP_ENV: production

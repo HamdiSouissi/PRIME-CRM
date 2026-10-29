@@ -49,7 +49,7 @@ export function Admin() {
         <div className="text-xs text-muted-foreground mt-2">Journalisation: create/update/delete/login/export/merge/stage_change • Conservation & suppression configurables • Accès non autorisé bloqué (tests d'isolation).</div>
       </CardContent></Card>
 
-      <Card className="bg-amber-50 dark:bg-amber-950/20 border-amber-200"><CardContent className="pt-4 text-xs">Sécurité : accès privé et limitation des connexions par identifiant. La protection par adresse IP, les clés IA et la rotation des mots de passe restent à finaliser avant toute exposition publique. Voir docs/security.md.</CardContent></Card>
+      <Card className="bg-amber-50 dark:bg-amber-950/20 border-amber-200"><CardContent className="pt-4 text-xs">Sécurité : accès privé et limitation des connexions par identifiant. La protection par adresse IP, la revue des destinations IA et la rotation des mots de passe restent à finaliser avant toute exposition publique. Voir docs/security.md.</CardContent></Card>
     </div>
   )
 }

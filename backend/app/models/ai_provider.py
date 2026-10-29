@@ -20,7 +20,9 @@ class AIProviderConfig(Base):
     
     # CodeCraftAPI / OpenAI compatible
     api_base_url = Column(String(255), nullable=True, default="https://www.codecraftapi.com/v1")
-    api_key_encrypted = Column(Text, nullable=True)  # stored encrypted / masked
+    # New credentials are versioned authenticated ciphertext; legacy plaintext
+    # is never used and must be replaced explicitly by an administrator.
+    api_key_encrypted = Column(Text, nullable=True)
     model_id = Column(String(100), nullable=True, default="gpt-4o-mini")
     
     temperature = Column(Float, default=0.7)

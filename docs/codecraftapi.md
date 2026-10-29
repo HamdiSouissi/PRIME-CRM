@@ -1,8 +1,11 @@
 # CodeCraftAPI — Fournisseur compatible OpenAI
 
-> Les clés API IA sont actuellement stockées en clair. Ne pas enregistrer de
-> clé réelle avant correction et revue de sécurité. Les tarifs de ce service
-> ne sont pas garantis gratuits ; ils doivent être vérifiés avant utilisation.
+> Les nouvelles clés API IA sont chiffrées dans la base ; les anciennes clés
+> en clair ne sont pas migrées automatiquement et doivent être remplacées.
+> La revue des destinations réseau IA n'est pas terminée : ne pas enregistrer
+> de clé réelle ni exposer le CRM avant cette revue. Les tarifs de ce service ne
+> sont pas garantis gratuits et doivent être vérifiés avant utilisation. Voir
+> [security.md](security.md) pour les limites et la gestion de `SECRET_KEY`.
 
 1. Créer compte https://www.codecraftapi.com → clé API
 2. Prime CRM > Paramètres > IA > + CodeCraftAPI

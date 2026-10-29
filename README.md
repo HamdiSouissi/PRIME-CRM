@@ -3,7 +3,7 @@
 **Prime CRM** est une application éditée par **Prime Vision Solutions** (Tunis, Tunisie) pour centraliser clients, pipeline commercial, devis, agenda et intelligence artificielle facultative.
 
 > [!WARNING]
-> Le projet n'est pas encore prêt pour une exposition publique. L'accès privé et Redis sont intégrés techniquement, mais aucun Redis hébergé n'est encore configuré. Il reste notamment à protéger les connexions par IP et les clés IA stockées en clair, prévoir la rotation des mots de passe et vérifier les dépendances et les sauvegardes. Une CI verte ne constitue pas une validation de sécurité.
+> Le projet n'est pas encore prêt pour une exposition publique. L'accès privé et Redis sont intégrés techniquement ; leur raccordement au déploiement reste à valider. Il reste notamment à protéger les connexions par IP, revoir les destinations réseau IA, prévoir la rotation des mots de passe et vérifier les dépendances et les sauvegardes. Une CI verte ne constitue pas une validation de sécurité.
 
 ![Prime CRM](https://img.shields.io/badge/Stack-React%20%2B%20FastAPI%20%2B%20PostgreSQL-0ea5e9)
 ![License](https://img.shields.io/badge/License-MIT-green)
@@ -57,7 +57,7 @@
 ### Sécurité & Confidentialité
 - Auth JWT + bcrypt, rôles (admin/manager/commercial/viewer) vérifiés serveur, séparation données par entreprise
 - SQLAlchemy paramétré et validation Pydantic ; la protection contre les tentatives de connexion et les autres mesures de sécurité restent à vérifier avant exposition publique.
-- Uploads limités à 10 Mo ; les clés API IA sont masquées à l'affichage mais actuellement stockées en clair. HTTPS, CORS, conservation des données et sauvegardes doivent être vérifiés avant production.
+- Uploads limités à 10 Mo ; les nouvelles clés API IA sont chiffrées avant stockage. Les anciennes clés en clair doivent être remplacées ; la revue réseau IA, HTTPS, CORS et les sauvegardes restent à valider avant production.
 
 ### Administration
 - Entreprise (logo, couleurs, coordonnées, devise, locale, taxes), utilisateurs/rôles, étapes pipeline, catégories/sources, modèles devis, notifications, règles, fournisseurs IA, imports/exports, sauvegardes, logs, sécurité
@@ -194,9 +194,10 @@ ce serveur de développement.
 
 ### Fournisseurs IA externes
 
-Les clés API IA sont actuellement stockées en clair. Ne pas enregistrer de clé
-réelle avant correction et revue de sécurité. La gratuité d'un fournisseur
-externe n'est pas garantie ; voir `docs/codecraftapi.md`.
+Les nouvelles clés IA sont chiffrées avant stockage ; les anciennes clés en
+clair doivent être remplacées. Ne pas enregistrer de clé réelle avant la revue
+réseau IA. La gratuité d'un fournisseur externe n'est pas garantie ; voir
+`docs/codecraftapi.md` et `docs/security.md`.
 
 ### Accès application
 
@@ -256,7 +257,7 @@ Détail : `docs/security.md`
 - JWT HS256, expiration 7j, bcrypt 4.x, CORS restrictif, headers sécurité
 - Permissions `require_admin`, `get_current_user` vérifiées à chaque requête, `company_id` injecté pour isolation
 - Tests d'isolation : `test_company_isolation` vérifie qu'une entreprise ne voit pas les données d'une autre
-- Les clés API IA sont masquées à l'affichage mais actuellement stockées en clair ; ne pas les utiliser avant correction.
+- Les nouvelles clés API IA sont chiffrées avec une clé dérivée de `SECRET_KEY`. Les anciennes clés en clair doivent être remplacées et la revue réseau IA reste nécessaire avant utilisation réelle.
 - Ne jamais commiter `.env` réel (voir `.gitignore`), utiliser `.env.example`
 
 ---
@@ -313,9 +314,10 @@ valeurs résolues ; les secrets ne doivent jamais être partagés.
 ## ✅ Validation avant déploiement
 
 La CI vérifie le code, les migrations et Redis sur des services jetables. Il
-reste à configurer le Redis hébergé, renforcer les connexions et protéger les
-clés IA, vérifier les sauvegardes et les dépendances, puis tester le cycle
-complet sur les services hébergés. Aucune exposition publique ne doit être déduite d'une CI verte.
+reste à raccorder le Redis hébergé, renforcer les connexions et revoir les
+destinations IA, vérifier les sauvegardes et les dépendances, puis tester le
+cycle complet sur les services hébergés. Aucune exposition publique ne doit
+être déduite d'une CI verte.
 
 Les changements sont publiés sur la branche de travail de la session. Aucune
 fusion vers `main` ni aucun déploiement n'est automatique à ce stade.

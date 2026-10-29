@@ -42,6 +42,7 @@ class AIProviderResponse(BaseModel):
     ollama_model: Optional[str] = None
     api_base_url: Optional[str] = None
     api_key_masked: Optional[str] = None
+    api_key_needs_reset: bool = False
     model_id: Optional[str] = None
     temperature: float
     max_tokens: int

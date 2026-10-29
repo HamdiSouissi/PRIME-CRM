@@ -1,13 +1,14 @@
 import httpx
 from typing import List
 from .base import AIProviderBase
+from .provider_urls import validate_openai_base_url
 
 class OpenAICompatProvider(AIProviderBase):
     """
     Compatible OpenAI / CodeCraftAPI: POST /chat/completions, GET /models
     """
-    def __init__(self, base_url: str, api_key: str, model: str = "gpt-4o-mini", timeout: int = 30):
-        self.base_url = base_url.rstrip("/")
+    def __init__(self, base_url: str | None, api_key: str, model: str = "gpt-4o-mini", timeout: int = 30):
+        self.base_url = validate_openai_base_url(base_url)
         self.api_key = api_key
         self.model = model
         self.timeout = timeout

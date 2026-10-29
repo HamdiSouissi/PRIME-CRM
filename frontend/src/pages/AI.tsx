@@ -27,7 +27,7 @@ export function AIPage() {
   }
   const createCodecraft = async (e: React.FormEvent) => {
     e.preventDefault()
-    try { await api.post('/ai/providers', { provider:'codecraftapi', ...codecraftForm, is_default: false }); toast.success('Fournisseur CodeCraftAPI créé'); setShowCodecraft(false); load() } catch(e:any){ toast.error(e.response?.data?.detail||'Erreur') }
+    try { await api.post('/ai/providers', { provider:'codecraftapi', ...codecraftForm, is_default: false }); setCodecraftForm(form => ({ ...form, api_key: '' })); toast.success('Fournisseur CodeCraftAPI créé'); setShowCodecraft(false); load() } catch(e:any){ toast.error(e.response?.data?.detail||'Erreur') }
   }
   const test = async (id:number) => {
     setTesting(id)
@@ -60,7 +60,15 @@ export function AIPage() {
           <CardContent className="space-y-3">
             {providers.map((p:any)=>(
               <div key={p.id} className="p-3 border rounded-lg">
-                <div className="flex items-center justify-between"><div><div className="font-medium text-sm">{p.name} <span className="text-xs px-1.5 py-0.5 rounded bg-slate-100">{p.provider}</span> {p.is_default && <span className="text-xs bg-sky-100 text-sky-700 px-1.5 py-0.5 rounded">Défaut</span>}</div><div className="text-xs text-muted-foreground">{p.provider==='ollama' ? `${p.ollama_url} • ${p.ollama_model}` : `${p.api_base_url} • ${p.model_id} • Clé: ${p.api_key_masked}`}</div><div className="text-xs">{p.is_active ? '✅ Actif' : '⏸️ Inactif'} {p.last_test_status && `• Test: ${p.last_test_status}`} {p.last_test_message && `• ${p.last_test_message.slice(0,60)}`}</div></div><div className="flex flex-col gap-1"><Button size="sm" variant="outline" onClick={()=>test(p.id)} disabled={testing===p.id}>{testing===p.id ? 'Test...' : 'Tester'}</Button><Button size="sm" variant="ghost" onClick={()=>refreshModels(p.id)}><RefreshCw className="w-3 h-3 mr-1"/>Modèles</Button><Button size="sm" variant="ghost" onClick={async()=>{ await api.delete(`/ai/providers/${p.id}`); load()}}>Suppr.</Button></div></div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="font-medium text-sm">{p.name} <span className="text-xs px-1.5 py-0.5 rounded bg-slate-100">{p.provider}</span> {p.is_default && <span className="text-xs bg-sky-100 text-sky-700 px-1.5 py-0.5 rounded">Défaut</span>}</div>
+                    <div className="text-xs text-muted-foreground">{p.provider==='ollama' ? `${p.ollama_url} • ${p.ollama_model}` : `${p.api_base_url} • ${p.model_id} • Clé: ${p.api_key_masked || 'non configurée'}`}</div>
+                    {p.api_key_needs_reset && <div role="alert" className="text-xs text-amber-700">Clé ancienne ou illisible : un administrateur doit supprimer et recréer ce fournisseur avec une nouvelle clé.</div>}
+                    <div className="text-xs">{p.is_active ? '✅ Actif' : '⏸️ Inactif'} {p.last_test_status && `• Test: ${p.last_test_status}`} {p.last_test_message && `• ${p.last_test_message.slice(0,60)}`}</div>
+                  </div>
+                  <div className="flex flex-col gap-1"><Button size="sm" variant="outline" onClick={()=>test(p.id)} disabled={testing===p.id}>{testing===p.id ? 'Test...' : 'Tester'}</Button><Button size="sm" variant="ghost" onClick={()=>refreshModels(p.id)}><RefreshCw className="w-3 h-3 mr-1"/>Modèles</Button><Button size="sm" variant="ghost" onClick={async()=>{ await api.delete(`/ai/providers/${p.id}`); load()}}>Suppr.</Button></div>
+                </div>
               </div>
             ))}
             {providers.length===0 && <div className="text-sm text-muted-foreground py-4">Aucun fournisseur — Ajoutez Ollama (local, gratuit) ou CodeCraftAPI ci-dessous.</div>}
@@ -103,7 +111,7 @@ export function AIPage() {
             <div><label className="text-xs">Modèle</label><Input value={codecraftForm.model_id} onChange={e=>setCodecraftForm({...codecraftForm, model_id:e.target.value})} placeholder="gpt-4o-mini, claude-3..." /></div>
             <div className="flex items-center gap-2"><input type="checkbox" checked={codecraftForm.is_active} onChange={e=>setCodecraftForm({...codecraftForm, is_active:e.target.checked})} /><label className="text-xs">Activé</label></div>
             <div className="md:col-span-2 text-xs text-muted-foreground">Découverte via GET /models et génération via POST /chat/completions (format OpenAI). La clé n'est jamais exposée côté frontend après enregistrement (affichage masqué).</div>
-            <div className="flex gap-2 md:col-span-2"><Button type="submit">Enregistrer</Button><Button type="button" variant="outline" onClick={()=>setShowCodecraft(false)}>Annuler</Button></div>
+            <div className="flex gap-2 md:col-span-2"><Button type="submit">Enregistrer</Button><Button type="button" variant="outline" onClick={()=>{ setCodecraftForm(form => ({ ...form, api_key: '' })); setShowCodecraft(false) }}>Annuler</Button></div>
           </form>
         </CardContent></Card>
       )}

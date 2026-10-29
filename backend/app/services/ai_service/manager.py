@@ -2,8 +2,15 @@ import json
 from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
 from ...models.ai_provider import AIProviderConfig
+from .credentials import AICredentialError, decrypt_credential
 from .ollama import OllamaProvider
 from .openai_compat import OpenAICompatProvider
+from .provider_urls import AIProviderURLError
+
+
+class AIServiceError(Exception):
+    """A sanitized AI failure suitable for displaying to the user."""
+
 
 class AIServiceManager:
     """
@@ -57,30 +64,26 @@ class AIServiceManager:
         if cfg.provider == "ollama":
             return OllamaProvider(base_url=cfg.ollama_url or "http://host.docker.internal:11434", model=cfg.ollama_model or "llama3.2", timeout=cfg.timeout_seconds or 30)
         else:
-            # openai_compat includes codecraftapi
-            return OpenAICompatProvider(base_url=cfg.api_base_url or "https://www.codecraftapi.com/v1", api_key=cfg.api_key_encrypted, model=cfg.model_id or "gpt-4o-mini", timeout=cfg.timeout_seconds or 30)
+            # openai_compat includes codecraftapi. Only the bound, authenticated
+            # credential reaches the provider; legacy plaintext is rejected.
+            api_key = decrypt_credential(cfg.api_key_encrypted, cfg.company_id, cfg.id)
+            if not api_key:
+                raise AIServiceError("Clé API IA manquante : vérifiez la configuration.")
+            return OpenAICompatProvider(base_url=cfg.api_base_url, api_key=api_key, model=cfg.model_id or "gpt-4o-mini", timeout=cfg.timeout_seconds or 30)
     
     async def generate(self, prompt: str, feature: str = None, provider_id: int = None, max_tokens: int = None, temperature: float = None, context: Dict[str, Any] = None) -> Dict[str, Any]:
         cfg = self.get_provider_config(feature=feature, provider_id=provider_id)
         if not cfg:
-            raise Exception("Aucun fournisseur IA configuré ou activé. Configurez Ollama (local, gratuit) ou CodeCraftAPI dans Paramètres > Intelligence artificielle. Le CRM reste entièrement fonctionnel sans IA.")
-        
-        provider = self._instantiate_provider(cfg)
+            raise AIServiceError("Aucun fournisseur IA configuré ou activé. Le CRM reste fonctionnel sans IA.")
+
         model = cfg.model_id if cfg.provider != "ollama" else cfg.ollama_model
         temp = temperature if temperature is not None else (cfg.temperature or 0.7)
         tokens = max_tokens or cfg.max_tokens or 1000
         timeout = cfg.timeout_seconds or 30
-        
-        # Security: limit data transmitted to necessary info only
-        # We already construct prompt with minimal needed data; log that external call happens if provider is external
-        is_external = cfg.provider != "ollama"
-        
+
         try:
+            provider = self._instantiate_provider(cfg)
             content = await provider.generate(prompt=prompt, model=model, temperature=temp, max_tokens=tokens, timeout=timeout)
-            
-            # Ensure response distinguishes verified vs suggestion
-            # If prompt didn't already ask, prepend disclaimer if needed?
-            
             return {
                 "content": content,
                 "provider": cfg.provider,
@@ -88,7 +91,10 @@ class AIServiceManager:
                 "is_verified": False,  # IA outputs are always suggestions to verify
                 "tokens_used": None
             }
-        except Exception as e:
-            # Try fallback to another provider if available
-            # Don't expose raw api key errors
-            raise Exception(f"Erreur IA ({cfg.provider}/{model}): {str(e)[:400]}. Vérifiez la configuration dans Paramètres > IA. L'échec de l'IA n'affecte pas les fonctions essentielles du CRM.")
+        except AIServiceError:
+            raise
+        except (AICredentialError, AIProviderURLError) as exc:
+            raise AIServiceError(str(exc)) from None
+        except Exception:
+            # Third-party responses and exceptions can contain credentials.
+            raise AIServiceError("Erreur du fournisseur IA. Vérifiez sa configuration ; le CRM reste fonctionnel sans IA.") from None
