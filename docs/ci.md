@@ -2,20 +2,26 @@
 
 Le workflow [CI](../.github/workflows/ci.yml) s'exécute sur les `push`, les
 `pull_request` et, une fois présent sur la branche par défaut, sur lancement
-manuel (`workflow_dispatch`). Il ne déploie rien et utilise uniquement des
-permissions `contents: read`. Les jobs backend et frontend n'utilisent aucun
-secret GitHub, aucune URL Neon et aucune clé Redis hébergée. Les identifiants
-PostgreSQL visibles dans le workflow ne servent qu'au conteneur jetable du job.
+manuel (`workflow_dispatch`). Il utilise uniquement la permission GitHub
+`contents: read`. Les jobs backend et frontend n'utilisent aucun secret GitHub,
+aucune URL Neon et aucune clé Redis hébergée. Les identifiants PostgreSQL
+visibles dans le workflow ne servent qu'au conteneur jetable du job.
 
-Pour les `push` sur `arena/a18b007f-prime-crm`, un job de **test sans
-déploiement** attend la réussite des deux jobs de CI, puis l'approbation de
-l'environnement GitHub `production`. Il compare l'empreinte Alembic du commit
-à la variable `PRODUCTION_ALEMBIC_FINGERPRINT` de cet environnement, puis
-vérifie localement le format de `RENDER_DEPLOY_HOOK_URL` sans afficher ce secret.
-Il ne crée pas d'objet de déploiement GitHub, ne lance pas de migration et ne
-contacte aucun hébergeur. Une variable manquante ou une empreinte différente
-fait échouer le contrôle. Ce test ne vérifie ni la base réelle ni l'authenticité
-du hook et n'est pas encore un CD : voir [deployment.md](deployment.md).
+Pour un `push` du dépôt `HamdiSouissi/PRIME-CRM` sur la branche
+`arena/a18b007f-prime-crm`, un troisième job peut **demander un déploiement
+Render** après la réussite des deux jobs et l'approbation de l'environnement
+GitHub `production`. Il compare l'empreinte Alembic à la variable
+`PRODUCTION_ALEMBIC_FINGERPRINT`, valide le format du secret
+`RENDER_DEPLOY_HOOK_URL`, vérifie que le commit est toujours en tête de branche,
+puis envoie une seule requête au hook en précisant le SHA testé. Il ne lance
+pas de migration et n'a aucun identifiant de base ou de Redis. Une variable
+manquante ou une empreinte différente bloque la requête.
+
+Le succès de ce job signifie **demande acceptée ou mise en file**, pas que
+l'application est en ligne : vérifier le commit et l'état `Live` dans Render.
+Le job n'enregistre donc pas un faux statut de déploiement GitHub. En cas de
+réponse incertaine, vérifier Render avant de réessayer. L'empreinte ne vérifie
+pas le schéma réel de Neon ; voir [deployment.md](deployment.md).
 
 Pour ce dépôt public, les runners GitHub standards utilisés par le workflow sont
 gratuits selon les conditions GitHub. Aucun service payant n'est créé.

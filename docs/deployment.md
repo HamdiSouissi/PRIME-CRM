@@ -4,7 +4,9 @@ Ce dépôt ne configure pas les services hébergés à lui seul. Pour l'instance
 personnelle, une première connexion frontend/backend a été confirmée ; elle ne
 constitue pas un audit complet de sécurité ni un test de restauration. Vérifier
 les réglages et les quotas directement chez les hébergeurs avant chaque mise en
-production. Le CD GitHub n'est pas encore configuré par ce dépôt.
+production. Le workflow GitHub contient une demande de déploiement backend
+soumise à approbation ; vérifier son résultat réel dans Render. Le frontend
+n'est pas encore publié par ce workflow.
 
 ## Sécurité de l'instance
 
@@ -88,21 +90,41 @@ Render ou Netlify. La CI teste ce contrôle sur des dépôts Git jetables.
 Cette empreinte détecte les changements de fichiers Alembic, **elle ne vérifie
 pas la révision ou le schéma de la base** et ne prouve pas la compatibilité du
 code. Elle ne protège pas non plus contre des écritures effectuées par du code
-applicatif. Elle n'est pas encore reliée à un déploiement et ne constitue donc
-pas un garde-fou de production à elle seule. Un job de répétition de la CI, sans
-accès à un hébergeur, la compare après approbation à la variable GitHub
+applicatif et ne constitue pas un garde-fou de production à elle seule. Après
+approbation, le job Render de la CI la compare à la variable GitHub
 `PRODUCTION_ALEMBIC_FINGERPRINT` de l'environnement `production`. Il contrôle
-ensuite localement le format du secret `RENDER_DEPLOY_HOOK_URL`, sans afficher
-sa valeur. Il ne consulte pas la base de production et ne publie rien. Ce
-contrôle de format ne vérifie pas l'authenticité du hook ni le service visé.
+le format du secret `RENDER_DEPLOY_HOOK_URL` sans l'afficher et interrompt la
+demande si le contrôle échoue. Ce contrôle de format ne vérifie pas
+l'authenticité du hook ni le service visé.
 
 La référence doit être conservée séparément et ne doit être mise à jour
 qu'après validation explicite et migration réellement vérifiée ; ne jamais la
-changer simplement pour contourner un échec. Pour tout futur CD, maintenir
-l'approbation des utilisateurs autorisés et arrêter le déploiement si la
-référence est absente ou différente.
+changer simplement pour contourner un échec. Une empreinte différente exige
+une revue de la migration et une autorisation distincte avant toute écriture.
+Le job GitHub ne se connecte pas à Neon et n'exécute aucune migration.
 
-Le workflow [CI](../.github/workflows/ci.yml) teste les migrations sur une base
-PostgreSQL et Redis sur des services jetables ; il construit les images sans les
-publier. Il n'accède ni à Neon ni à un Redis hébergé et ne déploie rien. Voir
-[ci.md](ci.md), [redis.md](redis.md) et [security.md](security.md).
+## Demande de déploiement backend
+
+1. Un push sur `arena/a18b007f-prime-crm` dans le dépôt indiqué déclenche les
+   tests. Ils utilisent des services PostgreSQL et Redis jetables uniquement.
+   Les pull requests, forks et autres branches ne déclenchent pas de demande
+   de déploiement.
+2. Si les deux jobs réussissent, un réviseur autorisé doit approuver le job
+   `production`. Vérifier l'impact et les quotas avant d'approuver : le service
+   redémarre et ses fichiers locaux éphémères, notamment les uploads, peuvent
+   disparaître. Le démarrage vérifie la base en lecture et effectue une sonde
+   Redis en écriture à expiration courte.
+3. Après contrôle de l'empreinte et du hook, le job vérifie le SHA en tête de
+   branche puis envoie **une seule** demande à Render, épinglée au commit testé.
+   Une nouvelle modification entre la vérification et la demande est encore
+   possible ; le SHA reste celui du commit approuvé. Ne pas approuver de nouveau
+   déploiement pendant que Render en exécute un autre.
+4. HTTP 200 ou 202 indique une demande acceptée ou en file, **pas un
+   déploiement réussi**. Vérifier le SHA et `Live` dans Render, puis l'application.
+   En cas de délai, échec réseau ou annulation, la demande peut déjà être
+   arrivée : vérifier Render avant de réessayer. Le code précédent et la base
+   ne sont pas automatiquement restaurés en cas de problème.
+
+Les tests de CI construisent les images sans les publier et ne contactent pas
+Neon ni le Redis hébergé. Voir [ci.md](ci.md), [redis.md](redis.md) et
+[security.md](security.md).

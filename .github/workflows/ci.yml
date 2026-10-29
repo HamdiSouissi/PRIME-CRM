@@ -5,19 +5,19 @@ on:
   pull_request:
   workflow_dispatch:
 
-# No deployment or repository-write permissions are needed.
+# The CI and Render hook require no repository-write permissions.
 permissions:
   contents: read
-
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
 
 jobs:
   backend:
     name: Backend · Python 3.11 / PostgreSQL 16
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Cancel stale tests without cancelling a Render request already underway.
+    concurrency:
+      group: ci-${{ github.workflow }}-backend-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
     services:
       postgres:
         image: postgres:16
@@ -60,7 +60,7 @@ jobs:
             backend/requirements.txt
             backend/requirements-dev.txt
 
-      - name: Test migration fingerprint guard (no production access)
+      - name: Test release guards with fictitious data (no production access)
         working-directory: .
         run: python -m unittest discover -s tools/tests -p 'test_*.py' -v
 
@@ -175,6 +175,9 @@ jobs:
     name: Frontend · Node.js 24
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    concurrency:
+      group: ci-${{ github.workflow }}-frontend-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
     defaults:
       run:
         working-directory: frontend
@@ -219,19 +222,21 @@ jobs:
         # Temporary container, no published ports and no application traffic.
         run: docker run --rm --add-host backend:127.0.0.1 prime-crm-frontend:ci nginx -t
 
-  production_guard_preview:
-    name: Production · contrôle TEST sans déploiement
-    # This is a rehearsal only, and only for a tested push to the designated branch.
-    # It checks the Render hook's format offline, without contacting any host.
-    # It never reads a production database credential.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/arena/a18b007f-prime-crm'
+  request_render_deploy:
+    name: Render · demande de déploiement après approbation
+    # Never deploy PRs, other branches, or forks. The environment additionally
+    # requires an authorized human to approve before any step receives secrets.
+    if: github.event_name == 'push' && github.repository == 'HamdiSouissi/PRIME-CRM' && github.ref == 'refs/heads/arena/a18b007f-prime-crm'
     needs: [backend, frontend]
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    concurrency:
+      group: prime-crm-production-backend-request
+      cancel-in-progress: false
     environment:
       name: production
-      # Apply the environment's approval and branch rules without recording a
-      # fictitious deployment. No external production service is contacted.
+      # A successful hook request does not prove the deploy is Live. Do not
+      # create a misleading GitHub production-deployment status.
       deployment: false
     steps:
       - name: Check out the tested commit
@@ -245,6 +250,9 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Ensure the checkout is the tested commit
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
       - name: Compare the Alembic fingerprint with the recorded baseline
         env:
           EXPECTED_ALEMBIC_FINGERPRINT: ${{ vars.PRODUCTION_ALEMBIC_FINGERPRINT }}
@@ -255,9 +263,24 @@ jobs:
           fi
           python tools/migration_fingerprint.py verify --commit "$GITHUB_SHA" --expected "$EXPECTED_ALEMBIC_FINGERPRINT"
 
-      - name: Check Render hook format offline (no deployment)
+      - name: Check Render hook format offline
         env:
           RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: python tools/render_hook_check.py
+
+      - name: Ensure the approved commit is still the branch head
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          python tools/render_hook_check.py
-          echo 'TEST only: no deployment, migration, or production service was contacted.'
+          branch_head="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/arena/a18b007f-prime-crm" --jq '.object.sha')"
+          if [ "$branch_head" != "$GITHUB_SHA" ]; then
+            echo '::error::The branch changed after this run started; no deploy request was sent.'
+            exit 1
+          fi
+
+      - name: Request a Render deploy of the tested commit
+        # One POST only. Acceptance is not proof that Render is Live; inspect
+        # the exact commit and deploy result on Render before releasing again.
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: python -m tools.render_deploy
