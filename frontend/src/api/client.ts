@@ -1,9 +1,16 @@
 import axios from 'axios'
 
-const API_URL = (import.meta as any).env?.VITE_API_URL || ''
+export function apiUrls(apiOrigin: string) {
+  const origin = apiOrigin.replace(/\/+$/, '')
+  return { api: `${origin}/api/v1`, docs: `${origin}/docs` }
+}
+
+const urls = apiUrls((import.meta as any).env?.VITE_API_URL || '')
+// With a separate static frontend, documentation is served by the API host.
+export const API_DOCS_URL = urls.docs
 
 export const api = axios.create({
-  baseURL: `${API_URL}/api/v1`,
+  baseURL: urls.api,
   headers: { 'Content-Type': 'application/json' }
 })
 

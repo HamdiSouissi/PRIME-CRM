@@ -9,6 +9,7 @@ import { Login } from './Login'
 
 vi.mock('../api/client', () => ({
   api: { post: vi.fn() },
+  API_DOCS_URL: 'https://api.example.test/docs',
   setAuthToken: vi.fn(),
 }))
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
@@ -50,6 +51,8 @@ describe('Login', () => {
     expect((screen.getByLabelText('Mot de passe') as HTMLInputElement).value).toBe('')
     expect(screen.queryByRole('button', { name: /inscription/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /initialiser/i })).toBeNull()
+    expect(screen.getByRole('link', { name: 'API Docs' }).getAttribute('href'))
+      .toBe('https://api.example.test/docs')
   })
 
   it('stores the signed-in user and navigates after a successful login', async () => {

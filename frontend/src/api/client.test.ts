@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { InternalAxiosRequestConfig } from 'axios'
-import { api, clearAuth, setAuthToken } from './client'
+import { api, apiUrls, clearAuth, setAuthToken } from './client'
 
 function successfulAdapter() {
   // A local Axios adapter keeps these tests independent of any backend.
@@ -25,6 +25,19 @@ beforeEach(() => {
 afterEach(() => {
   clearAuth()
   localStorage.clear()
+})
+
+describe('API URLs', () => {
+  it('uses relative URLs when no API origin is configured', () => {
+    expect(apiUrls('')).toEqual({ api: '/api/v1', docs: '/docs' })
+  })
+
+  it('uses the configured origin without a duplicate slash', () => {
+    expect(apiUrls('https://api.example.test/')).toEqual({
+      api: 'https://api.example.test/api/v1',
+      docs: 'https://api.example.test/docs',
+    })
+  })
 })
 
 describe('API authentication', () => {

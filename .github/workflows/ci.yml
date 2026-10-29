@@ -199,6 +199,14 @@ jobs:
       - name: Type-check and build frontend
         run: npm run build
 
+      - name: Verify static hosting rules
+        run: |
+          test "$(cat dist/_redirects)" = '/* /index.html 200'
+          grep -Fx "  X-Frame-Options: DENY" dist/_headers
+          grep -Fx "  Content-Security-Policy: frame-ancestors 'none'" dist/_headers
+          grep -Fx "  X-Content-Type-Options: nosniff" dist/_headers
+          grep -Fx "  Referrer-Policy: strict-origin-when-cross-origin" dist/_headers
+
       - name: Build frontend Docker image
         # Build only: the image stays on the runner and is never pushed.
         run: docker build --tag prime-crm-frontend:ci .

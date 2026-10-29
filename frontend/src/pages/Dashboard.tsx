@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api } from '../api/client'
+import { api, API_DOCS_URL } from '../api/client'
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/card'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts'
 import { Users, TrendingUp, FileText, AlertTriangle, ArrowUpRight, Briefcase, Clock, CheckCircle2 } from 'lucide-react'
@@ -159,7 +159,7 @@ export function Dashboard() {
             <p className="text-sm text-blue-100 mt-1">Configurez Ollama en local (gratuit) ou CodeCraftAPI pour activer l'assistant IA : résumés clients, brouillons d'emails et suggestions de relances.</p>
             <div className="flex gap-2 mt-4">
               <Link to="/ia" className="bg-white text-sky-700 px-4 py-1.5 rounded-lg text-sm font-medium">Configurer l'IA</Link>
-              <a href="/docs" target="_blank" className="bg-white/20 px-4 py-1.5 rounded-lg text-sm">API Docs</a>
+              <a href={API_DOCS_URL} target="_blank" rel="noreferrer" className="bg-white/20 px-4 py-1.5 rounded-lg text-sm">API Docs</a>
             </div>
           </CardContent>
         </Card>

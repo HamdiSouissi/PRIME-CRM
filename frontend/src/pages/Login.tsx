@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useLocation, useNavigate, Link } from 'react-router-dom'
-import { api, setAuthToken } from '../api/client'
+import { api, API_DOCS_URL, setAuthToken } from '../api/client'
 import { Button } from '../components/ui/button'
 import { Input, Label } from '../components/ui/input'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../components/ui/card'
@@ -73,7 +73,7 @@ export function Login() {
             </form>
 
             <div className="mt-6 text-center text-xs text-muted-foreground">
-              <Link to="/" className="hover:underline">Documentation</Link> • <a href="/docs" target="_blank" rel="noreferrer" className="hover:underline">API Docs</a>
+              <Link to="/" className="hover:underline">Documentation</Link> • <a href={API_DOCS_URL} target="_blank" rel="noreferrer" className="hover:underline">API Docs</a>
             </div>
           </CardContent>
         </Card>
