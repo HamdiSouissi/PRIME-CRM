@@ -45,9 +45,10 @@ gratuits selon les conditions GitHub. Aucun service payant n'est créé.
   fichiers `.env`, les données et les dépendances locales des contextes de
   construction.
 - **Frontend, Node 24** : `npm ci` depuis le lockfile, ESLint, tests Vitest,
-  vérification TypeScript et build Vite. Node 20 est en fin de vie depuis le
-  30 avril 2026 ; Node 24 est utilisé pour la CI et le Dockerfile frontend.
-  L'hébergement frontend reste à décider lors du déploiement.
+  vérification TypeScript et build Vite, puis vérification des règles statiques
+  `_redirects` et `_headers`. Node 20 est en fin de vie depuis le 30 avril 2026 ;
+  Node 24 est utilisé pour la CI et le Dockerfile frontend. La CI ne publie pas
+  son build sur Netlify.
 
 Les tests frontend couvrent l'authentification, la modification du mot de
 passe, la déconnexion, la révocation par l'admin et l'interface IA avec API

@@ -1,21 +1,28 @@
-# Déploiement : préparation en cours
+# Déploiement et migrations
 
-**Ne pas exposer publiquement le projet pour l'instant.** Redis et les modes
-IP/global sont intégrés, mais leur raccordement et HTTPS restent à valider sur
-l'hébergeur réel. Une défense réseau complémentaire pour l'IA, la récupération
-d'un compte perdu, les sauvegardes et l'audit des dépendances restent à traiter.
-Le changement de mot de passe et la révocation globale des sessions sont
-intégrés, mais pas encore déployés. Aucun CD Render ou frontend n'est configuré
-à ce stade.
+Ce dépôt ne configure pas les services hébergés à lui seul. Pour l'instance
+personnelle, une première connexion frontend/backend a été confirmée ; elle ne
+constitue pas un audit complet de sécurité ni un test de restauration. Vérifier
+les réglages et les quotas directement chez les hébergeurs avant chaque mise en
+production. Le CD GitHub n'est pas encore configuré par ce dépôt.
 
-Le backend doit utiliser `APP_ENV=production`, une `SECRET_KEY` aléatoire et
-persistante, une URL PostgreSQL, une URL Redis TLS authentifiée et des origines
-HTTPS explicites. Les variables
-sensibles doivent être définies dans le gestionnaire de secrets de l'hébergeur,
-jamais dans Git. `AI_ALLOWED_ORIGINS` est vide par défaut : laisser l'IA sans
-fournisseur tant que la destination, son coût et la défense de sortie réseau
-n'ont pas été validés ; ne pas activer l'exception Ollama locale en production.
-Voir [security.md](security.md).
+## Sécurité de l'instance
+
+- Le backend a besoin de `APP_ENV=production`, d'une `SECRET_KEY` aléatoire et
+  persistante, d'une URL PostgreSQL, d'une URL Redis TLS authentifiée et
+  d'origines HTTPS explicites. Ne jamais commiter ou partager ces secrets.
+- `ALLOW_PUBLIC_REGISTRATION=false` désactive l'inscription publique ; le
+  premier administrateur se crée une seule fois avec le bootstrap privé. Ne
+  pas laisser `FIRST_SUPERUSER_*` dans les services ou la CI après bootstrap.
+- La visibilité privée Netlify Free est limitée au propriétaire de l'équipe.
+  Elle protège l'accès au frontend, pas l'API Render, qui reste joignable sur
+  Internet et doit donc conserver son authentification et ses protections.
+- `AI_ALLOWED_ORIGINS` est vide par défaut : ne pas activer de fournisseur IA
+  sans valider la destination, son coût et la défense de sortie réseau. Ne pas
+  activer l'exception Ollama locale en production.
+- Sur Render Free, le stockage local est éphémère : ne pas compter sur les
+  fichiers uploadés pour une conservation durable. La veille et les quotas
+  gratuits peuvent également affecter la disponibilité.
 
 Le serveur web choisit un quota par IP (`LOGIN_LIMIT_SCOPE=ip`, défaut) ou un
 quota partagé (`LOGIN_LIMIT_SCOPE=global`). Le mode IP de production exige
@@ -30,19 +37,64 @@ les nouvelles connexions pour tous. Les `CLIENT_IP_*` doivent être vides et
 Cette origine sert aux redirections ; elle n'impose pas HTTPS elle-même. Il faut
 vérifier séparément l'entrée publique et tout éventuel accès HTTP alternatif.
 Conserver `--no-proxy-headers` dans la commande Uvicorn. Voir [security.md](security.md).
-La validation du trajet réel et la création d'un service auront lieu seulement
-après autorisation ; ce document ne crée ni ne configure d'hébergement.
 
-Avant de lancer le serveur, exécuter les migrations Alembic, puis le bootstrap
-du premier administrateur lorsque la base est vide. La cible de la base doit
-être vérifiée avant toute migration. La révision `20261029_02` est nouvelle :
-Neon reste à `20261028_01` jusqu'à une migration explicitement confirmée. Lors
-de la bascule, arrêter les anciennes versions du backend avant d'appliquer la
-migration et démarrer les nouvelles : l'ancien code ne vérifie pas la révocation
-des sessions. Le démarrage échoue si l'une des étapes échoue ; il ne crée pas
-les tables avec `create_all`. Voir [security.md](security.md).
+## Migrations et sauvegardes
+
+Une sauvegarde dont le sommaire est lisible n'est pas une sauvegarde dont la
+restauration a été testée. Tester toute restauration sur une base **isolée et
+jetable**, jamais par accident sur la base active. Ne pas commiter les archives.
+
+La révision `20261029_02` a été appliquée à l'instance personnelle initiale
+après sauvegarde et autorisation. Ceci ne dit rien de l'état d'autres bases :
+vérifier la cible et sa révision avant toute opération. Le serveur vérifie la
+révision Alembic au démarrage et refuse un décalage ; il ne lance ni migration
+ni bootstrap et ne crée pas les tables avec `create_all`. Cette vérification de
+révision ne prouve pas que le schéma physique ou les données sont intacts.
+
+Pour chaque future migration :
+
+1. Identifier la base et vérifier la sauvegarde ainsi que la stratégie de
+   restauration. Évaluer la compatibilité entre ancien code, nouveau code et
+   schéma, y compris pendant le déploiement. Prévoir une maintenance si la
+   migration n'est pas rétrocompatible.
+2. Tester la migration sur une base PostgreSQL jetable. Obtenir une autorisation
+   explicite avant toute écriture sur la base active ; ne pas supposer qu'un
+   simple déploiement autorise une migration.
+3. Appliquer la migration autorisée, puis vérifier la révision réellement
+   présente en base avant de mettre à jour toute référence de déploiement.
+4. Déployer le code testé et surveiller le service. Un retour arrière du code
+   ne restaure pas la base et un `alembic downgrade` peut perdre des données.
+
+Render Free ne propose pas de commande pre-deploy : les migrations ne doivent
+pas être lancées automatiquement au démarrage du conteneur. Les révisions
+futures nécessitent une procédure explicite et adaptée à leur compatibilité.
+
+## Contrôle préparatoire des fichiers Alembic
+
+`tools/migration_fingerprint.py` calcule une empreinte SHA-256 sur les objets
+Git du répertoire `backend/alembic` et du fichier `backend/alembic.ini` d'un
+commit complet. Exemples depuis la racine du dépôt :
+
+```sh
+python tools/migration_fingerprint.py print --commit <SHA_COMPLET>
+python tools/migration_fingerprint.py verify --commit <SHA_COMPLET> --expected <EMPREINTE_ENREGISTREE>
+```
+
+`verify` retourne 0 si l'empreinte correspond, 1 si elle diffère, et 2 en cas
+d'entrée invalide ou de lecture impossible. Les fichiers non commités ne sont
+pas pris en compte. Le contrôle lit Git localement : aucun accès à Neon, Redis,
+Render ou Netlify. La CI teste ce contrôle sur des dépôts Git jetables.
+
+Cette empreinte détecte les changements de fichiers Alembic, **elle ne vérifie
+pas la révision ou le schéma de la base** et ne prouve pas la compatibilité du
+code. Elle ne protège pas non plus contre des écritures effectuées par du code
+applicatif. Elle n'est pas encore reliée à un déploiement et ne constitue donc
+pas un garde-fou de production à elle seule. Quand elle sera intégrée au CD,
+sa référence devra être conservée séparément et ne devra être mise à jour
+qu'après validation explicite et migration réellement vérifiée ; ne jamais la
+changer simplement pour contourner un échec.
 
 Le workflow [CI](../.github/workflows/ci.yml) teste les migrations sur une base
 PostgreSQL et Redis sur des services jetables ; il construit les images sans les
 publier. Il n'accède ni à Neon ni à un Redis hébergé et ne déploie rien. Voir
-[ci.md](ci.md) et [redis.md](redis.md).
+[ci.md](ci.md), [redis.md](redis.md) et [security.md](security.md).
