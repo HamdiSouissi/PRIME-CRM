@@ -2,6 +2,7 @@ from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 from ..database import Base
+from ..core.security import new_session_nonce
 
 class User(Base):
     __tablename__ = "users"
@@ -9,6 +10,9 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String(255), unique=True, index=True, nullable=False)
     hashed_password = Column(String(255), nullable=False)
+    # NULL is allowed only for pre-migration accounts; their first login
+    # atomically initializes a random value and invalidates legacy tokens.
+    session_nonce = Column(String(43), nullable=True, default=new_session_nonce)
     first_name = Column(String(100), nullable=False)
     last_name = Column(String(100), nullable=False)
     role = Column(String(50), default="commercial")  # admin, manager, commercial, viewer

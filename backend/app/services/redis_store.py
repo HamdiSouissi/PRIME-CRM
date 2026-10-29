@@ -24,6 +24,8 @@ from ..config import settings
 CACHE_SECONDS = 30
 LOGIN_ATTEMPTS = 10
 LOGIN_WINDOW_SECONDS = 15 * 60
+PASSWORD_CHANGE_ATTEMPTS = 5
+PASSWORD_CHANGE_WINDOW_SECONDS = 15 * 60
 
 # One key and a server-side atomic operation shared by all API workers.
 # A missing TTL is repaired rather than leaving an account blocked forever.
@@ -94,15 +96,19 @@ class RedisStore:
         normalized = unicodedata.normalize("NFKC", identifier).strip().casefold()
         return f"{self.prefix}:login:{self._digest('login', normalized)}"
 
+    def _password_change_key(self, identifier: str) -> str:
+        normalized = unicodedata.normalize("NFKC", identifier).strip().casefold()
+        return f"{self.prefix}:password-change:{self._digest('password-change', normalized)}"
+
     def check_writable(self) -> None:
         # Also checks authentication and write quota, not just an unbilled PING.
         key = f"{self.prefix}:probe:{secrets.token_hex(16)}"
         if not self.client.set(key, "1", ex=5, nx=True):
             raise RedisError("Redis probe failed")
 
-    def record_login(self, identifier: str) -> None:
+    def _record_limited_attempt(self, key: str, window: int, limit: int) -> None:
         # All attempts count, successful or not, to keep the operation atomic.
-        result = self.client.eval(_LOGIN_LUA, 1, self._login_key(identifier), LOGIN_WINDOW_SECONDS)
+        result = self.client.eval(_LOGIN_LUA, 1, key, window)
         try:
             if not isinstance(result, (list, tuple)) or len(result) != 2:
                 raise ValueError("Invalid response shape")
@@ -111,8 +117,16 @@ class RedisStore:
             raise RedisError("Invalid Redis limiter response") from None
         if count < 1:
             raise RedisError("Invalid Redis limiter response")
-        if count > LOGIN_ATTEMPTS:
+        if count > limit:
             raise LoginRateLimited(ttl)
+
+    def record_login(self, identifier: str) -> None:
+        self._record_limited_attempt(self._login_key(identifier), LOGIN_WINDOW_SECONDS, LOGIN_ATTEMPTS)
+
+    def record_password_change(self, identifier: str) -> None:
+        self._record_limited_attempt(
+            self._password_change_key(identifier), PASSWORD_CHANGE_WINDOW_SECONDS, PASSWORD_CHANGE_ATTEMPTS
+        )
 
     def get_stage_outcomes(self, company_id: int) -> tuple[list[int], list[int]] | None:
         try:

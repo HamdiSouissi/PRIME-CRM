@@ -3,6 +3,8 @@ import os
 import time
 
 from fastapi import FastAPI, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from .config import settings
@@ -46,6 +48,10 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    if request.url.path.startswith(f"{settings.API_V1_STR}/auth/"):
+        # Authentication responses must not be retained by shared caches.
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
     response.headers["X-Process-Time"] = str(time.time() - start)
     return response
 
@@ -122,6 +128,23 @@ def health():
 @app.get("/api/v1/health", tags=["health"])
 def health_v1():
     return {"status": "ok", "version": settings.VERSION}
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    # Pydantic's default error includes the rejected input, sometimes the whole
+    # request body. Never echo a password from an authentication/account form.
+    sensitive_paths = {
+        f"{settings.API_V1_STR}/auth/login",
+        f"{settings.API_V1_STR}/auth/login-json",
+        f"{settings.API_V1_STR}/auth/register",
+        f"{settings.API_V1_STR}/auth/change-password",
+        f"{settings.API_V1_STR}/users",
+    }
+    route_path = getattr(request.scope.get("route"), "path", "")
+    if request.method == "POST" and route_path in sensitive_paths:
+        return JSONResponse(status_code=422, content={"detail": "Données invalides"})
+    return await request_validation_exception_handler(request, exc)
 
 
 @app.exception_handler(Exception)

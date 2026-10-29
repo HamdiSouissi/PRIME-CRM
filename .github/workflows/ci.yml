@@ -83,7 +83,26 @@ jobs:
           DATABASE_URL: postgresql://ci:ci-only-password@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/primecrm_ci
         run: |
           # The CLI operates only on the disposable service container.
+          # Preserve an old-format account through the additive session migration.
+          alembic upgrade 20261028_01
+          python - <<'PY'
+          import os
+          import psycopg2
+          with psycopg2.connect(os.environ['DATABASE_URL']) as connection:
+              with connection.cursor() as cursor:
+                  cursor.execute("INSERT INTO companies (name, slug) VALUES ('CI migration', 'ci-migration') RETURNING id")
+                  company_id = cursor.fetchone()[0]
+                  cursor.execute("INSERT INTO users (company_id, email, hashed_password, first_name, last_name, role, is_active) VALUES (%s, %s, %s, %s, %s, %s, %s)", (company_id, 'old-format@example.com', 'fictitious-hash', 'Old', 'User', 'viewer', True))
+          PY
           alembic upgrade head
+          python - <<'PY'
+          import os
+          import psycopg2
+          with psycopg2.connect(os.environ['DATABASE_URL']) as connection:
+              with connection.cursor() as cursor:
+                  cursor.execute("SELECT hashed_password, session_nonce FROM users WHERE email = %s", ('old-format@example.com',))
+                  assert cursor.fetchone() == ('fictitious-hash', None)
+          PY
           alembic upgrade head
           alembic check
           # Destructive: this database is discarded at the end of the job.
@@ -96,6 +115,13 @@ jobs:
         env:
           CI_TEST_POSTGRES_URL: postgresql://ci:ci-only-password@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/primecrm_ci
         run: python -m pytest -q app/tests/test_ai_postgresql.py
+
+      - name: Test concurrent sessions with disposable PostgreSQL and Redis
+        # Independent connections and committed rows; only these containers are allowed.
+        env:
+          CI_TEST_POSTGRES_URL: postgresql://ci:ci-only-password@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/primecrm_ci
+          CI_TEST_REDIS_URL: redis://127.0.0.1:${{ job.services.redis.ports['6379'] }}/0
+        run: python -m pytest -q app/tests/test_sessions_postgresql.py
 
       - name: Test private bootstrap on disposable PostgreSQL
         env:

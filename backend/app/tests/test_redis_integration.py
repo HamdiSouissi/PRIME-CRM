@@ -33,6 +33,8 @@ from app.services.redis_store import (
     CACHE_SECONDS,
     LOGIN_ATTEMPTS,
     LOGIN_WINDOW_SECONDS,
+    PASSWORD_CHANGE_ATTEMPTS,
+    PASSWORD_CHANGE_WINDOW_SECONDS,
     LoginRateLimited,
     create_redis_store,
     get_redis_store,
@@ -178,6 +180,49 @@ def test_both_login_routes_share_a_limit_and_other_accounts_are_unaffected(redis
     assert all("@" not in key and "incorrect" not in key for key in keys)
 
 
+def test_password_change_limiter_is_atomic_for_concurrent_attempts(redis_store):
+    def attempt(_):
+        try:
+            redis_store.record_password_change("parallel@example.com")
+            return True
+        except LoginRateLimited:
+            return False
+
+    with ThreadPoolExecutor(max_workers=12) as workers:
+        results = list(workers.map(attempt, range(20)))
+    assert sum(results) == PASSWORD_CHANGE_ATTEMPTS
+    key = redis_store._password_change_key("parallel@example.com")
+    assert int(redis_store.client.get(key)) == 20
+    assert 0 < redis_store.client.ttl(key) <= PASSWORD_CHANGE_WINDOW_SECONDS
+
+
+def test_password_change_limit_is_separate_and_pseudonymized(redis_store, api):
+    client, (headers, _), (other_headers, _) = api
+    wrong_password = "fictitious-wrong-password"
+    new_password = "fictitious-new-password-4827"
+    for _ in range(PASSWORD_CHANGE_ATTEMPTS):
+        response = client.post("/api/v1/auth/change-password", headers=headers, json={
+            "old_password": wrong_password, "new_password": new_password,
+        })
+        assert response.status_code == 400
+        assert wrong_password not in response.text and new_password not in response.text
+    blocked = client.post("/api/v1/auth/change-password", headers=headers, json={
+        "old_password": TEST_PASSWORD, "new_password": new_password,
+    })
+    assert blocked.status_code == 429 and int(blocked.headers["Retry-After"]) > 0
+    key = redis_store._password_change_key("first@example.com")
+    assert key != redis_store._login_key("first@example.com")
+    assert "first@example.com" not in key and TEST_PASSWORD not in key
+    assert int(redis_store.client.get(key)) == PASSWORD_CHANGE_ATTEMPTS + 1
+    assert 0 < redis_store.client.ttl(key) <= PASSWORD_CHANGE_WINDOW_SECONDS
+    # Neither a fresh login for this account nor another user's counter is blocked.
+    assert client.post("/api/v1/auth/login-json", json={"email": "first@example.com", "password": TEST_PASSWORD}).status_code == 200
+    assert client.post("/api/v1/auth/change-password", headers=other_headers, json={
+        "old_password": wrong_password, "new_password": new_password,
+    }).status_code == 400
+    assert client.get("/api/v1/auth/me", headers=headers).status_code == 200
+
+
 def test_cache_falls_back_to_database_but_login_fails_closed_on_outage(redis_store, api, monkeypatch):
     client, (headers, _), _ = api
     broken = create_redis_store("redis://127.0.0.1:1/0", TEST_KEY, prefix=redis_store.prefix)
@@ -186,6 +231,12 @@ def test_cache_falls_back_to_database_but_login_fails_closed_on_outage(redis_sto
     login = client.post("/api/v1/auth/login-json", json={"email": "first@example.com", "password": TEST_PASSWORD})
     assert login.status_code == 503
     assert TEST_PASSWORD not in login.text and "127.0.0.1" not in login.text
+    change = client.post("/api/v1/auth/change-password", headers=headers, json={
+        "old_password": TEST_PASSWORD, "new_password": "fictitious-new-password-4827",
+    })
+    assert change.status_code == 503
+    assert TEST_PASSWORD not in change.text and "127.0.0.1" not in change.text
+    assert client.get("/api/v1/auth/me", headers=headers).status_code == 200
     broken.close()
 
 

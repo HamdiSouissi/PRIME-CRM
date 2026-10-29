@@ -1,7 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import { LayoutDashboard, Users, Kanban, Calendar, FileText, Package, Settings, LogOut, Sun, Moon, Menu, X, ChevronLeft, Bot, BarChart3, Shield } from 'lucide-react'
 import { useState, useEffect } from 'react'
-import { clearAuth } from '../../api/client'
+import { api, clearAuth } from '../../api/client'
 
 const links = [
   { to: '/', icon: LayoutDashboard, label: 'Tableau de bord' },
@@ -20,6 +20,7 @@ export function Sidebar() {
   const [collapsed, setCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const [dark, setDark] = useState(false)
+  const [loggingOut, setLoggingOut] = useState(false)
   const navigate = useNavigate()
   const user = JSON.parse(localStorage.getItem('prime_user') || 'null')
 
@@ -27,6 +28,30 @@ export function Sidebar() {
     if (dark) document.documentElement.classList.add('dark')
     else document.documentElement.classList.remove('dark')
   }, [dark])
+
+  const logoutEverywhere = async () => {
+    setLoggingOut(true)
+    let revoked = false
+    try {
+      // Handle an already-invalid token here so the global 401 redirect does
+      // not hide the warning that other sessions may still be active.
+      const response = await api.post('/auth/logout-all', undefined, {
+        validateStatus: status => (status >= 200 && status < 300) || status === 401,
+      })
+      revoked = response.status >= 200 && response.status < 300
+    } catch {
+      // The request may have failed before or after the server committed.
+    } finally {
+      clearAuth()
+      navigate('/login', {
+        replace: true,
+        state: { authNotice: revoked
+          ? { kind: 'success', text: 'Toutes vos sessions ont été déconnectées.' }
+          : { kind: 'warning', text: 'Déconnexion locale effectuée, mais la révocation des autres sessions n’a pas pu être confirmée. Reconnectez-vous et réessayez.' } },
+      })
+      setLoggingOut(false)
+    }
+  }
 
   const SidebarContent = () => (
     <div className={`flex flex-col h-full bg-white dark:bg-slate-900 border-r dark:border-slate-800 transition-all ${collapsed ? 'w-16' : 'w-64'}`}>
@@ -61,7 +86,7 @@ export function Sidebar() {
         </div>
         <div className={`flex gap-1 ${collapsed ? 'flex-col' : ''}`}>
           <button onClick={() => setDark(!dark)} className="flex-1 flex items-center justify-center gap-2 px-2 py-1.5 text-xs rounded-md hover:bg-accent"><Sun className="w-3.5 h-3.5 dark:hidden" /><Moon className="w-3.5 h-3.5 hidden dark:block" />{!collapsed && (dark ? 'Clair' : 'Sombre')}</button>
-          <button onClick={() => { clearAuth(); navigate('/login') }} className="flex items-center justify-center gap-2 px-2 py-1.5 text-xs rounded-md hover:bg-red-50 text-red-600"><LogOut className="w-3.5 h-3.5" />{!collapsed && 'Déconnexion'}</button>
+          <button onClick={logoutEverywhere} disabled={loggingOut} aria-label="Déconnexion partout" title="Déconnexion sur tous les appareils" className="flex items-center justify-center gap-2 px-2 py-1.5 text-xs rounded-md hover:bg-red-50 text-red-600 disabled:opacity-50"><LogOut className="w-3.5 h-3.5" />{!collapsed && (loggingOut ? 'Déconnexion...' : 'Déconnexion partout')}</button>
         </div>
       </div>
     </div>

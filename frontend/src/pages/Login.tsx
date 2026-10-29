@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { useLocation, useNavigate, Link } from 'react-router-dom'
 import { api, setAuthToken } from '../api/client'
 import { Button } from '../components/ui/button'
 import { Input, Label } from '../components/ui/input'
@@ -10,10 +10,14 @@ export function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
   const navigate = useNavigate()
+  const location = useLocation()
+  const authNotice = location.state?.authNotice as { kind: 'success' | 'warning', text: string } | undefined
 
   const doLogin = async (e: React.FormEvent) => {
     e.preventDefault()
+    setError('')
     setLoading(true)
     try {
       const res = await api.post('/auth/login-json', { email, password })
@@ -22,7 +26,7 @@ export function Login() {
       toast.success(`Bienvenue ${res.data.user.first_name} !`)
       navigate('/')
     } catch (err: any) {
-      toast.error(err.response?.data?.detail || 'Erreur de connexion')
+      setError(typeof err.response?.data?.detail === 'string' ? err.response.data.detail : 'Erreur de connexion')
     } finally { setLoading(false) }
   }
 
@@ -53,6 +57,7 @@ export function Login() {
             <CardDescription>Accédez à votre espace commercial privé</CardDescription>
           </CardHeader>
           <CardContent>
+            {authNotice && <p role="status" className={`mb-4 rounded-md p-3 text-sm ${authNotice.kind === 'warning' ? 'bg-amber-50 text-amber-900' : 'bg-emerald-50 text-emerald-900'}`}>{authNotice.text}</p>}
             <form onSubmit={doLogin} className="space-y-4">
               <div>
                 <Label htmlFor="login-email">Email</Label>
@@ -62,6 +67,7 @@ export function Login() {
                 <Label htmlFor="login-password">Mot de passe</Label>
                 <Input id="login-password" type="password" autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)} required />
               </div>
+              {error && <p role="alert" className="text-sm text-red-700 dark:text-red-400">{error}</p>}
               <Button type="submit" disabled={loading} className="w-full">{loading ? 'Connexion...' : 'Se connecter'}</Button>
               <p className="text-xs text-center text-muted-foreground">Les comptes sont créés par un administrateur.</p>
             </form>

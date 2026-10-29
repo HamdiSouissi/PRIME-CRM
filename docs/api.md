@@ -15,6 +15,25 @@ comptes nouvellement créés doivent respecter les mêmes limites de mot de pass
 que le premier administrateur : 16 caractères minimum, 72 octets UTF-8 maximum,
 sans espaces au début ou à la fin.
 
-Les erreurs HTTP courantes comprennent 400, 401, 403, 404 et 500. La protection
-des connexions et la revue des journaux doivent encore être finalisées avant
-exposition publique.
+## Mot de passe et sessions
+
+Toutes les routes ci-dessous exigent un jeton Bearer valide ; les chemins sont
+préfixés par `/api/v1`.
+
+- `POST /auth/change-password` : objet JSON `old_password`, `new_password`.
+  L'ancien mot de passe est obligatoire. Une réponse `200` confirme le
+  changement et révoque toutes les sessions de ce compte, y compris le jeton
+  utilisé. Un ancien mot de passe incorrect, un nouveau mot de passe invalide
+  ou inchangé donnent `400` sans invalider la session. `429` signale la limite
+  de tentatives et `503` une limitation indisponible ; une panne de réseau
+  après l'envoi peut laisser le résultat incertain.
+- `POST /auth/logout-all` : sans corps ; `200` confirme la révocation de toutes
+  les sessions de ce compte. Un jeton déjà invalide reçoit `401` : cela ne
+  confirme pas la révocation d'autres sessions. Pas de déconnexion par appareil.
+- `POST /users/{id}/revoke-sessions` : réservé à un administrateur de la même
+  entreprise ; `200` révoque toutes les sessions du compte ciblé, `403` refuse
+  un rôle insuffisant et `404` masque les comptes d'une autre entreprise.
+
+Ne pas transmettre les mots de passe et jetons dans une URL ou des journaux.
+La protection par IP et la revue des journaux doivent encore être finalisées
+avant exposition publique. Voir [security.md](security.md).

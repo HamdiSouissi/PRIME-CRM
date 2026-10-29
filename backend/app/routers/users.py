@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 from typing import List
 from ..database import get_db
 from ..models.user import User
-from ..core.security import get_password_hash, is_acceptable_new_password
+from ..core.security import get_password_hash, is_acceptable_new_password, new_session_nonce
 from ..core.permissions import get_current_user, require_admin
 from ..schemas.auth import UserResponse
 from pydantic import BaseModel, EmailStr
@@ -88,8 +89,21 @@ def update_user(user_id: int, payload: UserUpdate, db: Session = Depends(get_db)
     user = db.query(User).filter(User.id == user_id, User.company_id == current_user.company_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="Utilisateur non trouvé")
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    changes = payload.model_dump(exclude_unset=True)
+    if "role" in changes and changes["role"] not in {"admin", "manager", "commercial", "viewer"}:
+        raise HTTPException(status_code=400, detail="Rôle invalide")
+    if "is_active" in changes and changes["is_active"] is None:
+        raise HTTPException(status_code=400, detail="État du compte invalide")
+    # Role/access changes invalidate previous tokens, including after an
+    # account is disabled then re-enabled. Other users' sessions are untouched.
+    access_changed = any(
+        field in changes and changes[field] != getattr(user, field)
+        for field in ("role", "is_active")
+    )
+    for field, value in changes.items():
         setattr(user, field, value)
+    if access_changed:
+        user.session_nonce = new_session_nonce()
     db.commit()
     db.refresh(user)
     from ..models.company import Company
@@ -99,6 +113,21 @@ def update_user(user_id: int, payload: UserUpdate, db: Session = Depends(get_db)
         "role": user.role, "company_id": user.company_id, "company_name": company.name if company else None,
         "is_active": user.is_active, "avatar_url": user.avatar_url, "phone": user.phone, "created_at": user.created_at
     }
+
+@router.post("/{user_id}/revoke-sessions")
+def revoke_user_sessions(user_id: int, db: Session = Depends(get_db), current_user: User = Depends(require_admin)):
+    result = db.execute(
+        update(User)
+        .where(User.id == user_id, User.company_id == current_user.company_id)
+        .values(session_nonce=new_session_nonce())
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="Utilisateur non trouvé")
+    db.commit()
+    return {"message": "Toutes les sessions de cet utilisateur sont déconnectées."}
+
 
 @router.delete("/{user_id}")
 def delete_user(user_id: int, db: Session = Depends(get_db), current_user: User = Depends(require_admin)):

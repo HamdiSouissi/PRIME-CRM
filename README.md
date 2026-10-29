@@ -3,7 +3,7 @@
 **Prime CRM** est une application éditée par **Prime Vision Solutions** (Tunis, Tunisie) pour centraliser clients, pipeline commercial, devis, agenda et intelligence artificielle facultative.
 
 > [!WARNING]
-> Le projet n'est pas encore prêt pour une exposition publique. L'accès privé et Redis sont intégrés techniquement ; leur raccordement au déploiement reste à valider. Il reste notamment à protéger les connexions par IP, revoir les destinations réseau IA, prévoir la rotation des mots de passe et vérifier les dépendances et les sauvegardes. Une CI verte ne constitue pas une validation de sécurité.
+> Le projet n'est pas encore prêt pour une exposition publique. L'accès privé, Redis, le changement de mot de passe et la révocation des sessions sont intégrés techniquement ; leur raccordement au déploiement reste à valider. Il reste notamment à protéger les connexions par IP, revoir les destinations réseau IA, prévoir la récupération d'un compte et vérifier les dépendances et les sauvegardes. Une CI verte ne constitue pas une validation de sécurité.
 
 ![Prime CRM](https://img.shields.io/badge/Stack-React%20%2B%20FastAPI%20%2B%20PostgreSQL-0ea5e9)
 ![License](https://img.shields.io/badge/License-MIT-green)
@@ -55,8 +55,8 @@
 - Garde-fous : n'invente pas, ne modifie pas données sensibles sans validation, pas d'action externe sans autorisation, distingue vérifié/estimation/suggestion, données minimales transmises, info si envoi externe, CRM 100% fonctionnel sans IA
 
 ### Sécurité & Confidentialité
-- Auth JWT + bcrypt, rôles (admin/manager/commercial/viewer) vérifiés serveur, séparation données par entreprise
-- SQLAlchemy paramétré et validation Pydantic ; la protection contre les tentatives de connexion et les autres mesures de sécurité restent à vérifier avant exposition publique.
+- Auth JWT + bcrypt, rôles (admin/manager/commercial/viewer) vérifiés serveur, séparation données par entreprise ; changement de mot de passe et révocation globale des sessions côté serveur.
+- Limitation Redis par identifiant pour les connexions et les changements de mot de passe ; la protection par IP et les autres mesures de sécurité restent à traiter avant exposition publique.
 - Uploads limités à 10 Mo ; les nouvelles clés API IA sont chiffrées avant stockage. Les anciennes clés en clair doivent être remplacées ; la revue réseau IA, HTTPS, CORS et les sauvegardes restent à valider avant production.
 
 ### Administration
@@ -95,7 +95,7 @@ Company 1──* User
 
 | Module | Endpoints clés |
 |--------|----------------|
-| Auth | `POST /auth/login`, `POST /auth/login-json`, `GET /auth/me` ; inscription publique désactivée en production |
+| Auth | `POST /auth/login`, `POST /auth/login-json`, `GET /auth/me`, `POST /auth/change-password`, `POST /auth/logout-all` ; inscription publique désactivée en production |
 | Clients | `GET/POST /clients, /clients/{id}/full, /duplicates, /merge, /contacts` |
 | Pipeline | `GET /stages, POST /stages, GET /opportunities/pipeline, /alerts, POST /move` |
 | Activités | `GET/POST /activities, /overdue, /upcoming, /complete` |
@@ -151,8 +151,12 @@ passe doit avoir au moins 16 caractères et au plus 72 octets.
 
 Les inscriptions publiques et l'ancien endpoint d'initialisation sont désactivés.
 L'administrateur peut créer les autres utilisateurs dans **Paramètres → Utilisateurs**.
-La modification du mot de passe depuis l'interface reste à implémenter ; conserver
-le mot de passe initial en lieu sûr et ne pas exposer l'application avant les
+Chaque utilisateur peut changer son mot de passe dans **Paramètres → Sécurité du
+compte**. Ce changement et le bouton **Déconnexion partout** révoquent toutes
+ses sessions, y compris la session courante. Un administrateur peut révoquer les
+sessions d'un autre utilisateur dans **Paramètres → Utilisateurs**. La
+récupération d'un mot de passe perdu n'est pas encore implémentée ; conserver le
+mot de passe initial en lieu sûr et ne pas exposer l'application avant les
 correctifs restants.
 
 ### Développement local (sans Docker, SQLite)
@@ -314,9 +318,9 @@ valeurs résolues ; les secrets ne doivent jamais être partagés.
 ## ✅ Validation avant déploiement
 
 La CI vérifie le code, les migrations et Redis sur des services jetables. Il
-reste à raccorder le Redis hébergé, renforcer les connexions et revoir les
-destinations IA, vérifier les sauvegardes et les dépendances, puis tester le
-cycle complet sur les services hébergés. Aucune exposition publique ne doit
+reste à raccorder le Redis hébergé, ajouter une protection par IP, revoir les
+destinations IA, prévoir la récupération des comptes, vérifier les sauvegardes
+et les dépendances, puis tester le cycle complet sur les services hébergés. Aucune exposition publique ne doit
 être déduite d'une CI verte.
 
 Les changements sont publiés sur la branche de travail de la session. Aucune

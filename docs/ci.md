@@ -19,14 +19,15 @@ gratuits selon les conditions GitHub. Aucun service payant n'est créé.
   vérification TLS locale. Les tests utilisent un préfixe aléatoire et ne
   lancent jamais `FLUSHDB` ; aucun Redis hébergé n'est contacté.
 - **Migrations** : PostgreSQL 16 est créé pour le job, puis détruit. Le workflow
-  teste `upgrade`, la répétition de `upgrade`, `alembic check`, `downgrade
-  base`, un nouvel `upgrade` et un dernier `check`. Le `downgrade` est
-  destructif : **ne jamais l'exécuter sur Neon ou sur une base contenant des
-  données à conserver**. La CI teste ensuite le stockage chiffré des clés IA
-  avec une clé fictive et un fournisseur HTTP simulé, puis l'initialisation
-  privée de l'administrateur et son idempotence sur cette même base jetable.
-  Les lignes IA sont annulées après le test ; les séquences PostgreSQL peuvent
-  néanmoins avancer, raison supplémentaire d'utiliser une base jetable.
+  teste la migration d'un compte fictif depuis `20261028_01` vers la nouvelle
+  révision, la répétition d'`upgrade`, `alembic check`, `downgrade base`, un
+  nouvel `upgrade` et un dernier `check`. Le `downgrade` est destructif : **ne
+  jamais l'exécuter sur Neon ou sur une base contenant des données à conserver**.
+  La CI teste ensuite le chiffrement IA, les courses entre connexion et
+  révocation des sessions sur plusieurs connexions PostgreSQL, leur interaction
+  avec Redis, puis le bootstrap privé. Les lignes IA sont annulées ; les tests de concurrence
+  valident réellement leurs transactions et suppriment seulement leurs comptes
+  fictifs. Les séquences peuvent avancer : la base doit rester jetable.
 - **Images Docker** : `docker compose config --quiet` valide les deux fichiers
   Compose avec des valeurs fictives. Chaque job construit ensuite son image,
   sans la publier ; un conteneur frontend jetable vérifie la configuration Nginx
@@ -38,10 +39,11 @@ gratuits selon les conditions GitHub. Aucun service payant n'est créé.
   30 avril 2026 ; Node 24 est utilisé pour la CI et le Dockerfile frontend.
   L'hébergement frontend reste à décider lors du déploiement.
 
-Les tests frontend couvrent le client d'authentification, la connexion et la
-sécurité de l'interface IA avec API simulée ; ils ne sont pas des tests de bout
-en bout. La plupart des tests fonctionnels backend utilisent SQLite ; PostgreSQL
-est aussi vérifié pour les migrations, les clés IA et le bootstrap privé. Les
+Les tests frontend couvrent l'authentification, la modification du mot de
+passe, la déconnexion, la révocation par l'admin et l'interface IA avec API
+simulée ; ils ne sont pas des tests de bout en bout. La plupart des tests
+fonctionnels backend utilisent SQLite ; PostgreSQL est aussi vérifié pour les
+migrations, les clés IA, les courses de session et le bootstrap privé. Les
 tests historiques activent l'inscription uniquement dans
 leur processus de test isolé ; elle est interdite en production. Les tests Redis
 utilisent un service jetable et non le futur fournisseur hébergé. La CI ne

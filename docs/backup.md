@@ -18,4 +18,11 @@ sauvegardes peuvent contenir des clés IA en clair : les protéger et révoquer
 chez le fournisseur toute clé qui aurait été exposée. La perte ou la rotation
 non planifiée de `SECRET_KEY` rend les clés chiffrées illisibles.
 
+La restauration peut aussi rétablir d'anciennes valeurs de session et rendre
+à nouveau valides certains jetons révoqués mais non expirés. Prévoir une
+révocation globale de tous les comptes après restauration et tester la
+procédure ; aucune commande dédiée de révocation globale de la base n'est
+fournie actuellement. Ne pas changer `SECRET_KEY` à la légère : cela invalide
+les jetons mais rend aussi les clés IA chiffrées illisibles.
+
 Ne commiter ni dump, ni fichier `.env`, ni URL contenant un mot de passe.

@@ -49,7 +49,7 @@ def harness(monkeypatch):
         ]
         db.add_all(users)
         db.flush()
-        ids = [user.id for user in users]
+        identities = [(user.id, user.session_nonce) for user in users]
         db.commit()
 
     def override_db():
@@ -73,7 +73,10 @@ def harness(monkeypatch):
     monkeypatch.setattr(httpx, "AsyncClient", mock_async_client)
     old_overrides = dict(app.dependency_overrides)
     app.dependency_overrides[get_db] = override_db
-    headers = [{"Authorization": f"Bearer {create_access_token(user_id)}"} for user_id in ids]
+    headers = [
+        {"Authorization": f"Bearer {create_access_token(user_id, session_nonce=nonce)}"}
+        for user_id, nonce in identities
+    ]
     client = TestClient(app)
     yield {"client": client, "factory": factory, "admin": headers[0], "viewer": headers[1], "other": headers[2], "outbound": outbound, "handler": handler}
     client.close()

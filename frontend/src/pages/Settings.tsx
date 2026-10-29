@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
+import { AccountSecurity } from '../components/AccountSecurity'
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Input, Textarea } from '../components/ui/input'
@@ -7,6 +8,7 @@ import { toast } from 'sonner'
 
 export function Settings() {
   const [company, setCompany] = useState<any>(null)
+  const [companyError, setCompanyError] = useState(false)
   const [users, setUsers] = useState<any[]>([])
   const [stages, setStages] = useState<any[]>([])
   const [form, setForm] = useState<any>({})
@@ -15,11 +17,16 @@ export function Settings() {
   const [ruleForm, setRuleForm] = useState({ name:'', trigger_type:'quote_no_response', action_type:'create_task', description:'' })
   const [tab, setTab] = useState('company')
 
+  let signedInUser: { id: number, role: string } | null = null
+  try { signedInUser = JSON.parse(localStorage.getItem('prime_user') || 'null') } catch { /* UI only; the API enforces roles */ }
+  const isAdmin = signedInUser?.role === 'admin'
+
   const load = () => {
-    api.get('/admin/company').then(r=>{ setCompany(r.data); setForm(r.data)})
-    api.get('/users').then(r=>setUsers(r.data))
-    api.get('/stages').then(r=>setStages(r.data))
-    api.get('/admin/automation/rules').then(r=>setRules(r.data))
+    setCompanyError(false)
+    api.get('/admin/company').then(r=>{ setCompany(r.data); setForm(r.data)}).catch(()=>setCompanyError(true))
+    api.get('/users').then(r=>setUsers(r.data)).catch(()=>{})
+    api.get('/stages').then(r=>setStages(r.data)).catch(()=>{})
+    api.get('/admin/automation/rules').then(r=>setRules(r.data)).catch(()=>{})
   }
   useEffect(()=>{ load() }, [])
 
@@ -41,7 +48,15 @@ export function Settings() {
     try { await api.post('/admin/automation/rules', { ...ruleForm, trigger_config: {}, action_config: { title: `Action auto: ${ruleForm.name}`, priority:'medium', due_in_days:2 }}); toast.success('Règle créée'); setRuleForm({name:'', trigger_type:'quote_no_response', action_type:'create_task', description:''}); load()} catch(e:any){ toast.error('Erreur')}
   }
 
-  if (!company) return <div className="p-8">Chargement...</div>
+  const revokeSessions = async (userId: number) => {
+    if (!confirm('Déconnecter toutes les sessions de cet utilisateur ?')) return
+    try {
+      await api.post(`/users/${userId}/revoke-sessions`)
+      toast.success('Toutes les sessions de cet utilisateur ont été déconnectées.')
+    } catch {
+      toast.error('Impossible de confirmer la déconnexion des sessions.')
+    }
+  }
 
   return (
     <div className="p-4 lg:p-8 max-w-[1600px] mx-auto space-y-4">
@@ -49,6 +64,7 @@ export function Settings() {
       <div className="flex gap-2 border-b overflow-x-auto">
         {[
           {id:'company', label:'Entreprise'},
+          {id:'security', label:'Sécurité du compte'},
           {id:'users', label:`Utilisateurs (${users.length})`},
           {id:'pipeline', label:'Pipeline'},
           {id:'automation', label:'Automatisations'},
@@ -58,7 +74,14 @@ export function Settings() {
         ))}
       </div>
 
-      {tab==='company' && (
+      {tab==='security' && <AccountSecurity />}
+
+      {tab==='company' && !company && (
+        <p role={companyError ? 'alert' : 'status'} className="text-sm text-muted-foreground">
+          {companyError ? 'Impossible de charger les paramètres de l’entreprise.' : 'Chargement...'}
+        </p>
+      )}
+      {tab==='company' && company && (
         <Card><CardContent className="pt-6">
           <form onSubmit={saveCompany} className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div><label className="text-xs font-medium">Nom entreprise</label><Input value={form.name||''} onChange={e=>setForm({...form, name:e.target.value})} /></div>
@@ -89,7 +112,8 @@ export function Settings() {
             <p className="text-xs text-muted-foreground mt-2">Mot de passe : 16 caractères minimum, 72 octets maximum, sans espaces aux extrémités. Rôles vérifiés côté serveur.</p>
           </CardContent></Card>
           <Card><CardContent className="pt-4">
-            <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="text-left text-muted-foreground"><th className="p-2">Nom</th><th>Email</th><th>Rôle</th><th>Statut</th><th>Actions</th></tr></thead><tbody>{users.map((u:any)=><tr key={u.id} className="border-t"><td className="p-2">{u.first_name} {u.last_name}</td><td>{u.email}</td><td><span className="text-xs px-1.5 py-0.5 rounded bg-slate-100">{u.role}</span></td><td>{u.is_active ? '✅ Actif' : '⏸️ Inactif'}</td><td><Button size="sm" variant="ghost" onClick={async()=>{ if(!confirm('Supprimer ?')) return; await api.delete(`/users/${u.id}`); load()}}>Supprimer</Button></td></tr>)}</tbody></table></div>
+            <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="text-left text-muted-foreground"><th className="p-2">Nom</th><th>Email</th><th>Rôle</th><th>Statut</th><th>Actions</th></tr></thead><tbody>{users.map((u:any)=><tr key={u.id} className="border-t"><td className="p-2">{u.first_name} {u.last_name}</td><td>{u.email}</td><td><span className="text-xs px-1.5 py-0.5 rounded bg-slate-100">{u.role}</span></td><td>{u.is_active ? '✅ Actif' : '⏸️ Inactif'}</td><td>{isAdmin && u.id !== signedInUser?.id && <Button size="sm" variant="outline" onClick={()=>revokeSessions(u.id)}>Déconnecter ses sessions</Button>} <Button size="sm" variant="ghost" onClick={async()=>{ if(!confirm('Supprimer ?')) return; await api.delete(`/users/${u.id}`); load()}}>Supprimer</Button></td></tr>)}</tbody></table></div>
+            {isAdmin && <p className="text-xs text-muted-foreground mt-3">La déconnexion d’un utilisateur révoque toutes ses sessions. Pour les vôtres, utilisez « Déconnexion partout » dans le menu.</p>}
           </CardContent></Card>
         </div>
       )}

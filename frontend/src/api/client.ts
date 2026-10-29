@@ -10,6 +10,7 @@ export const api = axios.create({
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('prime_token')
   if (token) config.headers.Authorization = `Bearer ${token}`
+  else delete config.headers.Authorization // another tab may have signed out
   return config
 })
 

@@ -1,10 +1,9 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { InternalAxiosRequestConfig } from 'axios'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { toast } from 'sonner'
 import { api, setAuthToken } from '../api/client'
 import { Login } from './Login'
 
@@ -81,7 +80,7 @@ describe('Login', () => {
 
     fillLoginForm()
 
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Connexion refusée'))
+    expect((await screen.findByRole('alert')).textContent).toBe('Connexion refusée')
     expect(setAuthToken).not.toHaveBeenCalled()
     expect(localStorage.getItem('prime_user')).toBeNull()
     expect(screen.getByRole('button', { name: 'Se connecter' })).toBeTruthy()

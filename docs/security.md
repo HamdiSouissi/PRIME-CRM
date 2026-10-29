@@ -2,8 +2,8 @@
 
 > L'application n'est pas encore prête pour une exposition publique. Redis
 > est intégré techniquement ; son raccordement au déploiement reste à valider.
-> La protection par adresse IP, la revue des destinations IA, la rotation des
-> mots de passe et l'audit des dépendances restent notamment à traiter.
+> La protection par adresse IP, la revue des destinations IA, la récupération
+> des comptes et l'audit des dépendances restent notamment à traiter.
 
 ## Configuration du backend
 
@@ -65,9 +65,68 @@ Le bootstrap et l'API comparent la révision Alembic enregistrée dans la base
 aux révisions attendues ; ils refusent de démarrer si elles diffèrent. L'API
 refuse aussi de démarrer si aucun utilisateur n'existe en mode privé. Ce
 contrôle de révision ne prouve pas l'absence d'une modification manuelle du
-schéma. La modification du mot de passe dans l'interface n'est pas encore
-implémentée ; il faut prévoir une procédure de rotation et de révocation de
-session avant l'exposition publique.
+schéma.
+
+### Migration des sessions à planifier séparément
+
+La nouvelle révision `20261029_02` ajoute `users.session_nonce` sans supprimer
+les utilisateurs. Les comptes déjà présents reçoivent une valeur aléatoire lors
+de leur prochaine connexion réussie. Les anciens JWT sans cette valeur sont
+refusés par la nouvelle version : chaque utilisateur doit se reconnecter.
+La base Neon réelle, si elle est encore à `20261028_01`, **n'a pas été migrée
+par les tests**. Ne pas lui appliquer cette révision avant d'avoir confirmé la
+cible, la sauvegarde et l'étape de déploiement. Le nouveau backend refuse de
+démarrer tant que la base n'est pas à la révision attendue.
+
+Prévoir une bascule coordonnée : arrêter les anciennes instances backend,
+appliquer la migration à la base confirmée puis démarrer uniquement la nouvelle
+version. Une instance ancienne encore en fonctionnement peut continuer à
+accepter des jetons révoqués, car elle ne vérifie pas `session_nonce`. Il ne
+faut pas mélanger anciennes et nouvelles versions pour considérer la révocation
+effective. Déployer aussi le nouveau frontend et faire recharger les
+navigateurs : l'ancienne interface n'appelait pas la révocation serveur lors de
+la déconnexion. Ne pas effectuer de `downgrade` en production sans plan :
+revenir à l'ancien code peut réautoriser des jetons révoqués mais non expirés.
+
+## Mots de passe et sessions
+
+- Tout utilisateur connecté peut changer son mot de passe dans **Paramètres →
+  Sécurité du compte** en fournissant l'ancien. Le nouveau doit être différent,
+  avoir au moins 16 caractères et au plus 72 octets UTF-8, sans espaces aux
+  extrémités. Le mot de passe reste haché par bcrypt. Une limite ne garantit
+  pas à elle seule un mot de passe imprévisible : utilisez un gestionnaire.
+- Un changement réussi déconnecte **toutes** les sessions de ce compte,
+  y compris celle qui a fait la demande ; l'utilisateur se reconnecte avec son
+  nouveau mot de passe. Le menu **Déconnexion partout** fait de même sans
+  changer le mot de passe. Il n'y a pas de révocation par appareil ni de liste
+  des appareils. Si l'appel de déconnexion échoue, le navigateur efface sa
+  copie locale et indique que les autres sessions peuvent être encore actives.
+- Un administrateur peut révoquer toutes les sessions d'un autre utilisateur
+  de sa propre entreprise dans **Paramètres → Utilisateurs**. Une désactivation,
+  une réactivation ou un changement de rôle invalide aussi les jetons précédents.
+  Les autres comptes ne sont pas déconnectés.
+- La version de session aléatoire est stockée en base et vérifiée avec le JWT
+  à chaque requête authentifiée ; la mise à jour est atomique, y compris face
+  aux connexions concurrentes. Un jeton révoqué est refusé aux vérifications
+  suivantes, mais une requête déjà authentifiée peut encore se terminer.
+- L'API limite séparément les changements de mot de passe par compte : cinq
+  tentatives sur 15 minutes, réussies ou non, puis `429`. Redis indisponible
+  bloque la modification en production (`503`), sans modifier le mot de passe.
+  Voir [redis.md](redis.md). Une erreur de réseau après l'envoi peut laisser
+  l'issue incertaine : la modification a pu être enregistrée malgré l'erreur.
+- Les JWT expirent par défaut après sept jours (`ACCESS_TOKEN_EXPIRE_MINUTES`),
+  sans renouvellement automatique. Ils restent stockés dans `localStorage` :
+  une faille XSS peut les voler. La révocation ne remplace pas une protection
+  XSS, une configuration HTTPS correcte ou un audit des permissions.
+- Il n'existe pas encore de récupération de mot de passe oublié, ni de
+  réinitialisation par un administrateur. Conserver les mots de passe dans un
+  gestionnaire sûr et définir une procédure de récupération avant exposition.
+  Les anciens mots de passe bcrypt de plus de 72 octets, autrefois tronqués
+  silencieusement, ne sont désormais plus acceptés à la connexion.
+- Restaurer une ancienne sauvegarde peut restaurer d'anciennes versions de
+  session et réautoriser des JWT non expirés. Prévoir et tester une révocation
+  globale après restauration ; aucune commande dédiée n'est encore fournie.
+  Ne pas changer `SECRET_KEY` sans plan : les clés IA chiffrées en dépendent.
 
 ## Clés des fournisseurs IA
 
@@ -112,8 +171,8 @@ Les fournisseurs IA externes peuvent être payants.
 
 - Les destinations réseau et URL des fournisseurs IA nécessitent une revue
   supplémentaire avant exposition, y compris contre les attaques SSRF.
-- La limitation Redis couvre les deux routes de connexion par identifiant,
-  pas par IP. Elle peut être utilisée pour bloquer temporairement un compte et
+- La limitation Redis couvre les deux routes de connexion et les changements
+  de mot de passe par identifiant, pas par IP. Elle peut être utilisée pour bloquer temporairement un compte et
   ne protège pas seule contre une attaque distribuée ou l'épuisement des quotas.
   Voir [redis.md](redis.md).
 - Les tests actuels ne constituent pas un audit complet des permissions,

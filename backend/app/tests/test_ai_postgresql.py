@@ -68,7 +68,7 @@ def test_ai_credentials_with_real_postgres_and_isolated_mock_provider(monkeypatc
             user = User(email=f"ai-{unique}@example.test", first_name="Test", last_name="Admin", hashed_password="unused", role="admin", company_id=company.id)
             db.add(user)
             db.flush()
-            company_id, user_id = company.id, user.id
+            company_id, user_id, session_nonce = company.id, user.id, user.session_nonce
             db.commit()
 
         def override_db():
@@ -87,7 +87,7 @@ def test_ai_credentials_with_real_postgres_and_isolated_mock_provider(monkeypatc
         monkeypatch.setattr(httpx, "AsyncClient", mocked_client)
         app.dependency_overrides[get_db] = override_db
         client = TestClient(app)
-        headers = {"Authorization": f"Bearer {create_access_token(user_id)}"}
+        headers = {"Authorization": f"Bearer {create_access_token(user_id, session_nonce=session_nonce)}"}
         created = client.post("/api/v1/ai/providers", headers=headers, json={
             "provider": "openai_compat", "name": "Disposable provider", "is_active": True,
             "api_base_url": "https://fake-provider.example.invalid/v1", "api_key": fake_key,

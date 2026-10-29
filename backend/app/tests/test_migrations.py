@@ -14,6 +14,7 @@ import sys
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 ALEMBIC_CONFIG = BACKEND_DIR / "alembic.ini"
 INITIAL_REVISION = "20261028_01"
+HEAD_REVISION = "20261029_02"
 
 
 def run_alembic(working_dir: Path, database_url: str, *arguments: str) -> subprocess.CompletedProcess:
@@ -50,7 +51,7 @@ def test_initial_migration_on_temporary_sqlite_database(tmp_path: Path) -> None:
             "SELECT version_num FROM alembic_version"
         ).fetchone()
     assert {"companies", "users", "clients", "opportunities", "quotes"} <= tables
-    assert revision == (INITIAL_REVISION,)
+    assert revision == (HEAD_REVISION,)
 
     # Downgrade is destructive: exercise it only on this disposable test DB.
     run_alembic(tmp_path, database_url, "downgrade", "base")
@@ -63,6 +64,31 @@ def test_initial_migration_on_temporary_sqlite_database(tmp_path: Path) -> None:
         }
     assert "companies" not in tables
     run_alembic(tmp_path, database_url, "upgrade", "head")
+
+
+def test_session_migration_preserves_existing_users_on_disposable_sqlite(tmp_path: Path) -> None:
+    database_file = tmp_path / "existing.sqlite"
+    database_url = f"sqlite:///{database_file.as_posix()}"
+    run_alembic(tmp_path, database_url, "upgrade", INITIAL_REVISION)
+    with sqlite3.connect(database_file) as connection:
+        connection.execute("INSERT INTO companies (id, name) VALUES (1, 'Disposable')")
+        connection.execute(
+            "INSERT INTO users (id, company_id, email, hashed_password, first_name, last_name, is_active) "
+            "VALUES (1, 1, 'test@example.test', 'fictitious-hash', 'Test', 'User', 1)"
+        )
+    run_alembic(tmp_path, database_url, "upgrade", "head")
+    run_alembic(tmp_path, database_url, "check")
+    with sqlite3.connect(database_file) as connection:
+        assert connection.execute("SELECT email, hashed_password, session_nonce FROM users").fetchone() == (
+            "test@example.test", "fictitious-hash", None
+        )
+        assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (HEAD_REVISION,)
+
+    # Only exercise destructive rollback on a throwaway database.
+    run_alembic(tmp_path, database_url, "downgrade", INITIAL_REVISION)
+    with sqlite3.connect(database_file) as connection:
+        assert "session_nonce" not in {row[1] for row in connection.execute("PRAGMA table_info(users)")}
+        assert connection.execute("SELECT email FROM users").fetchone() == ("test@example.test",)
 
 
 def test_postgres_sql_generation_with_encoded_password(tmp_path: Path) -> None:
