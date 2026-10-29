@@ -91,8 +91,10 @@ code. Elle ne protège pas non plus contre des écritures effectuées par du cod
 applicatif. Elle n'est pas encore reliée à un déploiement et ne constitue donc
 pas un garde-fou de production à elle seule. Un job de répétition de la CI, sans
 accès à un hébergeur, la compare après approbation à la variable GitHub
-`PRODUCTION_ALEMBIC_FINGERPRINT` de l'environnement `production`. Il ne
-consulte ni secret de déploiement ni base de production et ne publie rien.
+`PRODUCTION_ALEMBIC_FINGERPRINT` de l'environnement `production`. Il contrôle
+ensuite localement le format du secret `RENDER_DEPLOY_HOOK_URL`, sans afficher
+sa valeur. Il ne consulte pas la base de production et ne publie rien. Ce
+contrôle de format ne vérifie pas l'authenticité du hook ni le service visé.
 
 La référence doit être conservée séparément et ne doit être mise à jour
 qu'après validation explicite et migration réellement vérifiée ; ne jamais la
