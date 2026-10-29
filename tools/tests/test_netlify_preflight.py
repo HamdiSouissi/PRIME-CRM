@@ -21,9 +21,11 @@ from tools.netlify_preflight import (
     SITE_HOST,
     SITE_ID,
     SITE_NAME,
+    _MAX_PRIVACY_BODY_BYTES,
     _MAX_RESPONSE_BYTES,
     check_private_login,
     get_site,
+    is_private_login_html,
     is_private_redirect,
     main,
     make_opener,
@@ -36,6 +38,23 @@ TOKEN = "fake-netlify-token-never-print"
 GATE = "https://app.netlify.com/edge-access?" + urlencode(
     {"domain": SITE_HOST, "requested_path": "/login", "site_id": SITE_ID}
 )
+def login_challenge(location: str = GATE) -> bytes:
+    # Fictitious copy of the current Netlify login template; no real secret.
+    encoded = location.replace("/", r"\/").replace("&", r"\u0026")
+    return f"""<!DOCTYPE html>
+<html><head><title>Login Redirect</title></head><body><script>
+window.onload = function() {{
+  var fragment = window.location.hash;
+  var url = new URL('{encoded}');
+  if (fragment) {{
+    var requestedPath = url.searchParams.get('requested_path');
+    url.searchParams.set('requested_path', requestedPath + fragment);
+  }}
+  window.location.href = url.toString();
+}};
+</script><noscript>Please enable JavaScript.</noscript></body></html>""".encode()
+
+
 SITE = {
     "id": SITE_ID,
     "name": SITE_NAME,
@@ -159,6 +178,62 @@ class NetlifyPreflightTests(unittest.TestCase):
         ):
             with self.subTest(location=location):
                 self.assertFalse(is_private_redirect(location))
+
+    def test_expected_401_login_challenge_is_recognized_without_running_script(self) -> None:
+        body = login_challenge()
+        self.assertTrue(is_private_login_html(body))
+        opener = Mock()
+        opener.open.side_effect = HTTPError(PUBLIC_LOGIN_URL, 401, "unauthorized", {}, io.BytesIO(body))
+        check_private_login(opener)
+        opener.open.assert_called_once()
+        request = opener.open.call_args.args[0]
+        self.assertEqual(request.get_method(), "GET")
+        self.assertIsNone(request.get_header("Authorization"))
+
+    def test_401_challenge_requires_exact_project_path_and_script(self) -> None:
+        body = login_challenge()
+        invalid_bodies = (
+            b"",
+            b"Unauthorized",
+            b"\xff",
+            b"x" * (_MAX_PRIVACY_BODY_BYTES + 1),
+            login_challenge(GATE.replace(SITE_ID, "another-project")),
+            login_challenge(GATE.replace(SITE_HOST, "another.netlify.app")),
+            login_challenge(GATE.replace("%2Flogin", "%2Fother")),
+            login_challenge(GATE.replace("https://", "http://")),
+            login_challenge(GATE + "&site_id=another"),
+            login_challenge(GATE + "#fragment"),
+            body.replace(b"Login Redirect", b"Wrong title"),
+            body.replace(b"window.location.href = url.toString();", b"console.log(url);"),
+            body.replace(b"window.location.href = url.toString();", b"window.location.href = url.toString(); alert(1);"),
+            body.replace(b"<script>", b'<script src="https://attacker.example/x.js">'),
+            body.replace(b"</script>", b"</script><script>evil()</script>"),
+            body.replace(b"<script>", b"<!--<script>").replace(b"</script>", b"</script>-->"),
+        )
+        for candidate in invalid_bodies:
+            with self.subTest(case=candidate[:50]):
+                self.assertFalse(is_private_login_html(candidate))
+        for candidate in (b"Unauthorized", login_challenge(GATE.replace(SITE_ID, "another-project"))):
+            opener = Mock()
+            opener.open.side_effect = HTTPError(PUBLIC_LOGIN_URL, 401, "unauthorized", {}, io.BytesIO(candidate))
+            with self.assertRaises(PreflightError):
+                check_private_login(opener)
+
+    def test_200_is_rejected_even_if_it_contains_the_challenge(self) -> None:
+        opener = Mock()
+        opener.open.return_value = response(login_challenge(), status=200)
+        with self.assertRaises(PreflightError):
+            check_private_login(opener)
+
+    def test_preflight_accepts_fictitious_401_challenge_after_project_checks(self) -> None:
+        opener = Mock()
+        opener.open.side_effect = [
+            response(json.dumps(SITE).encode()),
+            HTTPError(PUBLIC_LOGIN_URL, 401, "unauthorized", {}, io.BytesIO(login_challenge())),
+        ]
+        run_preflight(TOKEN, opener)
+        self.assertEqual(opener.open.call_count, 2)
+        self.assertIsNone(opener.open.call_args_list[1].args[0].get_header("Authorization"))
 
     def test_nonprivate_or_unexpected_responses_fail_closed(self) -> None:
         cases = (

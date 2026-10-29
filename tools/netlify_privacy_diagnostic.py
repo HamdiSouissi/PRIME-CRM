@@ -17,6 +17,7 @@ from tools.netlify_preflight import (
     SITE_ID,
     _PROBE_USER_AGENT,
     get_private_login_response,
+    is_private_login_html,
     is_private_redirect,
     make_opener,
 )
@@ -78,6 +79,7 @@ def describe_unauthorized_body(body: bytes) -> str:
         "domain": SITE_HOST in lower,
         "site": SITE_ID in lower,
         "inline": any(is_private_redirect(target) for target in inline_targets),
+        "signature": is_private_login_html(body),
     }
     return ";".join(f"body_{name}:{int(value)}" for name, value in flags.items())
 

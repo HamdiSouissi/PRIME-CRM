@@ -14,6 +14,7 @@ import os
 import re
 import ssl
 import sys
+from html.parser import HTMLParser
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlsplit
 from urllib.request import HTTPSHandler, HTTPRedirectHandler, ProxyHandler, Request, build_opener
@@ -29,6 +30,22 @@ _MAX_PRIVACY_BODY_BYTES = 65_536
 _PROBE_USER_AGENT = "prime-crm-read-only-preflight"
 # OAuth bearer-token characters, with no whitespace, control characters or URL.
 _TOKEN = re.compile(r"[A-Za-z0-9._~+/-]{8,510}={0,2}\Z", re.ASCII)
+# Netlify currently serves a 401 HTML page whose inline JavaScript navigates to
+# edge-access. Do not execute it: recognize only this exact, bounded template
+# and validate its embedded URL. A template change fails closed for review.
+_NETLIFY_LOGIN_SCRIPT = re.compile(
+    r"""\s*window\.onload\s*=\s*function\s*\(\s*\)\s*\{\s*
+    var\s+fragment\s*=\s*window\.location\.hash\s*;\s*
+    var\s+url\s*=\s*new\s+URL\s*\(\s*
+    (?P<quote>['"])(?P<target>[A-Za-z0-9._~:/?%=&+\\-]+)(?P=quote)\s*\)\s*;\s*
+    if\s*\(\s*fragment\s*\)\s*\{\s*
+    var\s+requestedPath\s*=\s*url\.searchParams\.get\s*\(\s*
+    (?P<q1>['"])requested_path(?P=q1)\s*\)\s*;\s*
+    url\.searchParams\.set\s*\(\s*(?P<q2>['"])requested_path(?P=q2)\s*,\s*
+    requestedPath\s*\+\s*fragment\s*\)\s*;\s*\}\s*
+    window\.location\.href\s*=\s*url\.toString\s*\(\s*\)\s*;\s*\}\s*;\s*""",
+    re.ASCII | re.VERBOSE,
+)
 
 
 class PreflightError(ValueError):
@@ -124,6 +141,73 @@ def is_private_redirect(location: str) -> bool:
     )
 
 
+class _LoginChallengeParser(HTMLParser):
+    """Collect only inline scripts and title text, without executing content."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.titles: list[str] = []
+        self.scripts: list[str] = []
+        self._title: list[str] | None = None
+        self._script: list[str] | None = None
+        self.invalid = False
+
+    def handle_starttag(self, tag, attrs) -> None:
+        if tag == "title":
+            if self._title is not None:
+                self.invalid = True
+            self._title = []
+        elif tag == "script":
+            if self._script is not None or any(name == "src" for name, _value in attrs):
+                self.invalid = True
+            self._script = []
+
+    def handle_data(self, data) -> None:
+        if self._title is not None:
+            self._title.append(data)
+        if self._script is not None:
+            self._script.append(data)
+
+    def handle_endtag(self, tag) -> None:
+        if tag == "title" and self._title is not None:
+            self.titles.append("".join(self._title))
+            self._title = None
+        elif tag == "script" and self._script is not None:
+            self.scripts.append("".join(self._script))
+            self._script = None
+
+
+def is_private_login_html(body: bytes) -> bool:
+    """Recognize Netlify's 401 challenge for this project without running JS.
+
+    This is a point-in-time observation, not proof of privacy for all routes or
+    future requests. Unknown HTML, encodings and script templates fail closed.
+    """
+    if not isinstance(body, bytes) or not body or len(body) > _MAX_PRIVACY_BODY_BYTES:
+        return False
+    try:
+        parser = _LoginChallengeParser()
+        parser.feed(body.decode("utf-8", errors="strict"))
+        parser.close()
+    except (UnicodeDecodeError, ValueError):
+        return False
+    if (
+        parser.invalid
+        or parser._title is not None
+        or parser._script is not None
+        or len(parser.titles) != 1
+        or parser.titles[0].strip() != "Login Redirect"
+        or len(parser.scripts) != 1
+    ):
+        return False
+    match = _NETLIFY_LOGIN_SCRIPT.fullmatch(parser.scripts[0])
+    if match is None:
+        return False
+    # Only the two known JS escapes are accepted; do not interpret arbitrary JS.
+    target = match.group("target").replace(r"\/", "/").replace(r"\u0026", "&")
+    return "\\" not in target and is_private_redirect(target)
+
+
 def get_private_login_response(opener, *, user_agent: str = _PROBE_USER_AGENT) -> tuple[int, str, bytes]:
     """Get /login without credentials, redirects, response logging, or retries."""
     request = Request(
@@ -155,10 +239,13 @@ def get_private_login_response(opener, *, user_agent: str = _PROBE_USER_AGENT) -
 
 
 def check_private_login(opener) -> None:
-    """Require the expected redirect; an unrecognized response fails closed."""
-    status, location, _body = get_private_login_response(opener)
-    if status not in (301, 302, 303, 307, 308) or not is_private_redirect(location):
-        raise PreflightError("The Netlify private login redirect was not confirmed")
+    """Require a recognized Netlify challenge; unknown responses fail closed."""
+    status, location, body = get_private_login_response(opener)
+    if status in (301, 302, 303, 307, 308) and is_private_redirect(location):
+        return
+    if status == 401 and is_private_login_html(body):
+        return
+    raise PreflightError("The Netlify private login challenge was not confirmed")
 
 
 def run_preflight(token: str, opener) -> None:
@@ -181,7 +268,8 @@ def main() -> int:
         print("::error::Netlify preflight failed; no deployment or configuration change was requested.", file=sys.stderr)
         return 1
     print("Read-only checks passed for the expected Netlify project and stopped builds.")
-    print("The anonymous /login probe reached Netlify's private-access redirect.")
+    print("The anonymous /login probe recognized a Netlify private-access challenge for the project.")
+    print("This is a point-in-time observation, not proof of privacy for every route or future request.")
     print("No deployment or configuration change was requested.")
     return 0
 

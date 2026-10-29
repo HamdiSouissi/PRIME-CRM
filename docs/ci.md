@@ -121,10 +121,14 @@ le HEAD de la branche et l'empreinte Alembic, puis utilise le secret
 d'environnement `NETLIFY_AUTH_TOKEN` pour lire le projet Netlify prédéfini.
 Il vérifie l'identifiant et le nom du projet, que les builds Git sont arrêtés,
 et refuse si les publications non-Git ou le déploiement publié sont explicitement
-bloqués. Il sonde ensuite `/login` sans jeton pour confirmer la redirection
-Netlify de protection privée correspondant au projet. Il n'envoie que des GET,
-n'active pas les builds et ne crée ni déploiement ni artefact. Cette sonde
-ponctuelle ne garantit pas que la visibilité restera privée par la suite.
+bloqués. Il sonde ensuite `/login` sans jeton : il reconnaît soit une
+redirection HTTP vers l'accès privé Netlify du projet, soit la page Netlify
+`401 Login Redirect` actuellement observée, dont le script contient l'URL de
+protection du bon projet. Le script n'est pas exécuté ; une page inconnue ou un
+simple 401 est refusé. Il n'envoie que des GET, n'active pas les builds et ne
+crée ni déploiement ni artefact. Cette sonde ponctuelle d'une seule route ne
+prouve pas la confidentialité de toutes les routes ni de futurs déploiements :
+confirmer aussi la visibilité de production dans le tableau de bord Netlify.
 
 Le jeton personnel Netlify peut donner des droits sur toutes les ressources
 accessibles à son compte ; il doit être enregistré **uniquement** comme secret
