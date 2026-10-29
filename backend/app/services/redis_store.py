@@ -27,6 +27,8 @@ LOGIN_ATTEMPTS = 10
 LOGIN_WINDOW_SECONDS = 15 * 60
 IP_LOGIN_ATTEMPTS = 30
 IP_LOGIN_WINDOW_SECONDS = 15 * 60
+GLOBAL_LOGIN_ATTEMPTS = 30
+GLOBAL_LOGIN_WINDOW_SECONDS = 15 * 60
 PASSWORD_CHANGE_ATTEMPTS = 5
 PASSWORD_CHANGE_WINDOW_SECONDS = 15 * 60
 
@@ -108,6 +110,10 @@ class RedisStore:
         canonical = canonical_client_ip(client_ip)
         return f"{self.prefix}:login-ip:{self._digest('login-ip', canonical)}"
 
+    def _login_global_key(self) -> str:
+        # One deployment-wide bucket, independent of user-controlled addresses.
+        return f"{self.prefix}:login-global:{self._digest('login-global', 'all')}"
+
     def check_writable(self) -> None:
         # Also checks authentication and write quota, not just an unbilled PING.
         key = f"{self.prefix}:probe:{secrets.token_hex(16)}"
@@ -133,6 +139,9 @@ class RedisStore:
 
     def record_login_ip(self, client_ip: str) -> None:
         self._record_limited_attempt(self._login_ip_key(client_ip), IP_LOGIN_WINDOW_SECONDS, IP_LOGIN_ATTEMPTS)
+
+    def record_global_login(self) -> None:
+        self._record_limited_attempt(self._login_global_key(), GLOBAL_LOGIN_WINDOW_SECONDS, GLOBAL_LOGIN_ATTEMPTS)
 
     def record_password_change(self, identifier: str) -> None:
         self._record_limited_attempt(

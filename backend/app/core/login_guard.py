@@ -14,7 +14,17 @@ from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
 
 from .client_ip import ClientIPError, is_trusted_proxy_peer, resolve_client_ip
-from ..services.redis_store import IP_LOGIN_WINDOW_SECONDS, LoginRateLimited, RedisStore
+from .public_origin import public_https_origin
+from ..services.redis_store import (
+    GLOBAL_LOGIN_WINDOW_SECONDS,
+    IP_LOGIN_WINDOW_SECONDS,
+    LoginRateLimited,
+    RedisStore,
+)
+
+
+# Never interpreted as a client IP; all global-mode requests share this bucket.
+_GLOBAL_BUCKET = "global"
 
 
 LOCAL_LOGIN_ATTEMPTS = 60
@@ -26,8 +36,8 @@ class LocalLoginGuard:
     """Bounded, per-process load shedding; Redis remains the shared authority.
 
     A short global budget limits the rate of Redis calls, even when the caller
-    rotates IPs. A negative cache skips Redis for already-blocked IPs. Neither
-    mechanism is shared between workers or a substitute for edge protection.
+    rotates IPs. A negative cache skips Redis for already-blocked buckets. Both
+    mechanisms are per-process and are not substitutes for edge protection.
     """
 
     def __init__(
@@ -46,11 +56,11 @@ class LocalLoginGuard:
         self._events: deque[float] = deque()
         self._blocked: OrderedDict[bytes, float] = OrderedDict()
 
-    def _key(self, client_ip: str) -> bytes:
-        return hmac.new(self._secret, client_ip.encode("ascii"), hashlib.sha256).digest()
+    def _key(self, bucket: str) -> bytes:
+        return hmac.new(self._secret, bucket.encode("ascii"), hashlib.sha256).digest()
 
-    def precheck(self, client_ip: str) -> int | None:
-        key = self._key(client_ip)
+    def precheck(self, bucket: str) -> int | None:
+        key = self._key(bucket)
         with self._lock:
             now = self._clock()
             until = self._blocked.get(key)
@@ -68,11 +78,11 @@ class LocalLoginGuard:
             self._events.append(now)
             return None
 
-    def remember_blocked(self, client_ip: str, retry_after: int) -> None:
-        key = self._key(client_ip)
+    def remember_blocked(self, bucket: str, retry_after: int, *, window: int = IP_LOGIN_WINDOW_SECONDS) -> None:
+        key = self._key(bucket)
         # A damaged Redis TTL cannot pin a local denial forever. If Redis has a
         # longer TTL, it will still reject the next check after this cache ends.
-        seconds = min(IP_LOGIN_WINDOW_SECONDS, max(1, retry_after))
+        seconds = min(window, max(1, retry_after))
         with self._lock:
             self._blocked[key] = self._clock() + seconds
             self._blocked.move_to_end(key)
@@ -99,28 +109,38 @@ def _response(status: int, retry_after: int | None = None) -> JSONResponse:
 
 
 class TrustedProxyHTTPSMiddleware:
-    """Preserve HTTPS redirects when an explicitly trusted proxy terminates TLS.
+    """Generate HTTPS redirects behind a verified public HTTPS ingress.
 
-    The operator must enforce HTTPS at that public ingress. No forwarded-proto
-    header is trusted, and an untrusted peer cannot change the ASGI scheme.
+    IP mode uses the explicitly trusted socket peer. Global mode uses only an
+    operator-specified canonical HTTPS origin and ignores the supplied Host.
+    Neither mode authenticates TLS at the socket: public HTTPS and isolation of
+    any alternate HTTP route must be enforced by the ingress, independently.
+    Forwarded-proto headers never determine the scheme.
     """
 
     def __init__(self, app, *, config):
         self.app, self.config = app, config
 
     async def __call__(self, scope, receive, send):
-        if (
-            scope.get("type") in {"http", "websocket"}
-            and self.config.APP_ENV == "production"
-            and is_trusted_proxy_peer(scope, self.config)
-        ):
-            scope = dict(scope)
-            scope["scheme"] = "wss" if scope["type"] == "websocket" else "https"
+        if scope.get("type") in {"http", "websocket"} and self.config.APP_ENV == "production":
+            if self.config.LOGIN_LIMIT_SCOPE == "global":
+                # The configured origin is not derived from any HTTP header or
+                # socket address. Require it to be valid at startup and here.
+                origin = public_https_origin(self.config.PUBLIC_API_ORIGIN)
+                scope = dict(scope)
+                scope["scheme"] = "wss" if scope["type"] == "websocket" else "https"
+                scope["server"] = (origin.host, origin.port)
+                scope["headers"] = [
+                    (name, value) for name, value in scope.get("headers", []) if name.lower() != b"host"
+                ] + [(b"host", origin.authority.encode("ascii"))]
+            elif is_trusted_proxy_peer(scope, self.config):
+                scope = dict(scope)
+                scope["scheme"] = "wss" if scope["type"] == "websocket" else "https"
         await self.app(scope, receive, send)
 
 
 class LoginIPMiddleware:
-    """Count both login routes before parsing or validating their bodies."""
+    """Count both login routes before parsing; use an IP or global bucket."""
 
     def __init__(self, app, *, config, store_provider: Callable[[], RedisStore | None], guard: LocalLoginGuard):
         self.app = app
@@ -153,22 +173,32 @@ class LoginIPMiddleware:
                 await self.app(scope, receive, send)
             return
 
-        try:
-            client_ip = resolve_client_ip(scope, self.config)
-        except ClientIPError:
-            await _response(503)(scope, receive, send)
-            return
+        if self.config.LOGIN_LIMIT_SCOPE == "global":
+            # Neither the socket peer nor user-supplied IP headers select this
+            # bucket. One shared Redis key covers every visitor and both routes.
+            bucket, window = _GLOBAL_BUCKET, GLOBAL_LOGIN_WINDOW_SECONDS
+            record = store.record_global_login
+            args = ()
+        else:
+            try:
+                bucket = resolve_client_ip(scope, self.config)
+            except ClientIPError:
+                await _response(503)(scope, receive, send)
+                return
+            window = IP_LOGIN_WINDOW_SECONDS
+            record = store.record_login_ip
+            args = (bucket,)
 
-        local_retry = self.guard.precheck(client_ip)
+        local_retry = self.guard.precheck(bucket)
         if local_retry is not None:
             await _response(429, local_retry)(scope, receive, send)
             return
         try:
             # redis-py is synchronous; never block the ASGI event loop on I/O.
-            await run_in_threadpool(store.record_login_ip, client_ip)
+            await run_in_threadpool(record, *args)
         except LoginRateLimited as exc:
-            retry = min(IP_LOGIN_WINDOW_SECONDS, exc.retry_after)
-            self.guard.remember_blocked(client_ip, retry)
+            retry = min(window, exc.retry_after)
+            self.guard.remember_blocked(bucket, retry, window=window)
             await _response(429, retry)(scope, receive, send)
             return
         except (RedisError, ValueError, UnicodeError):

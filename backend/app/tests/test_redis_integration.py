@@ -31,6 +31,8 @@ from app.database import Base, get_db
 from app.main import app
 from app.services.redis_store import (
     CACHE_SECONDS,
+    GLOBAL_LOGIN_ATTEMPTS,
+    GLOBAL_LOGIN_WINDOW_SECONDS,
     IP_LOGIN_ATTEMPTS,
     IP_LOGIN_WINDOW_SECONDS,
     LOGIN_ATTEMPTS,
@@ -186,6 +188,60 @@ def test_ip_rate_limit_is_atomic_shared_and_pseudonymized(redis_store):
     assert 0 < redis_store.client.ttl(key) <= IP_LOGIN_WINDOW_SECONDS
     assert int(redis_store.client.get(key)) == 50
     redis_store.record_login_ip("192.0.2.85")
+
+
+def test_global_limit_is_atomic_across_workers_and_repairs_ttl(redis_store):
+    other_worker = RedisStore(redis_store.client, TEST_KEY, redis_store.prefix)
+
+    def attempt(number):
+        try:
+            (redis_store if number % 2 else other_worker).record_global_login()
+            return True
+        except LoginRateLimited:
+            return False
+
+    with ThreadPoolExecutor(max_workers=20) as workers:
+        results = list(workers.map(attempt, range(50)))
+    assert sum(results) == GLOBAL_LOGIN_ATTEMPTS
+    key = redis_store._login_global_key()
+    assert other_worker._login_global_key() == key
+    assert int(redis_store.client.get(key)) == 50
+    assert 0 < redis_store.client.ttl(key) <= GLOBAL_LOGIN_WINDOW_SECONDS
+
+    # A damaged, non-expiring counter must not lock out the app forever.
+    redis_store.client.set(key, "1")
+    assert redis_store.client.ttl(key) == -1
+    other_worker.record_global_login()
+    assert 0 < redis_store.client.ttl(key) <= GLOBAL_LOGIN_WINDOW_SECONDS
+
+
+def test_global_limit_counts_success_and_preserves_existing_sessions(redis_store, api, monkeypatch):
+    client, (headers, _), _ = api
+    monkeypatch.setattr(settings, "LOGIN_LIMIT_SCOPE", "global")
+    monkeypatch.setattr(settings, "CLIENT_IP_MODE", "")
+    # The real Redis fixture is loopback only. These addresses are fictitious.
+    other = TestClient(WithClientIP(app, "127.0.0.2"))
+    try:
+        successful = client.post("/api/v1/auth/login-json", json={
+            "email": "first@example.com", "password": TEST_PASSWORD,
+        })
+        assert successful.status_code == 200
+        for number in range(GLOBAL_LOGIN_ATTEMPTS - 1):
+            endpoint = "/api/v1/auth/login" if number % 2 else "/api/v1/auth/login-json"
+            assert other.post(endpoint, json={}).status_code == 422
+        denied = other.post("/api/v1/auth/login-json", json={})
+        assert denied.status_code == 429
+        assert 0 < int(denied.headers["Retry-After"]) <= GLOBAL_LOGIN_WINDOW_SECONDS
+        key = redis_store._login_global_key()
+        assert int(redis_store.client.get(key)) == GLOBAL_LOGIN_ATTEMPTS + 1
+        for _ in range(70):
+            assert client.post("/api/v1/auth/login-json", json={}).status_code == 429
+        assert int(redis_store.client.get(key)) == GLOBAL_LOGIN_ATTEMPTS + 1
+        # The guard applies only to login; previously issued sessions still work.
+        assert client.get("/api/v1/auth/me", headers=headers).status_code == 200
+        assert client.get("/health").status_code == 200
+    finally:
+        other.close()
 
 
 def test_real_redis_ip_limit_covers_both_routes_before_body_validation(redis_store, api):

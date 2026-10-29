@@ -51,8 +51,9 @@ app.add_middleware(
     store_provider=_login_store,
     guard=app.state.login_ip_guard,
 )
-# Production is required to terminate TLS at the trusted public ingress.
-# Restore HTTPS for redirects without trusting forwarded-proto headers.
+# Production must enforce TLS at every public ingress. Restore HTTPS for
+# redirects without trusting forwarded-proto headers; global mode uses the
+# explicitly configured canonical public origin rather than the request Host.
 app.add_middleware(TrustedProxyHTTPSMiddleware, config=settings)
 
 app.add_middleware(

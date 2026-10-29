@@ -18,14 +18,15 @@ sans espaces au début ou à la fin.
 ## Connexion et limites
 
 Les requêtes `POST /api/v1/auth/login` (formulaire) et
-`POST /api/v1/auth/login-json` partagent une limite par IP et une limite par
-identifiant. Les corps invalides consomment aussi la limite IP. `429` indique
-une limite atteinte et fournit `Retry-After` en secondes ; `503` signale une
+`POST /api/v1/auth/login-json` partagent une limite avant validation, par IP
+vérifiée ou globale selon la configuration, ainsi qu'une limite par
+identifiant. Les corps invalides consomment aussi le premier quota. `429`
+indique une limite atteinte et fournit `Retry-After` ; `503` signale une
 protection ou une identification IP indisponible. Les réponses
-d'authentification ne sont pas mises en cache. Ces limites dépendent d'une
-configuration de proxy vérifiée et de Redis en production ; elles peuvent
-bloquer temporairement des utilisateurs derrière une même IP. Voir
-[redis.md](redis.md) et [security.md](security.md).
+d'authentification ne sont pas mises en cache. Redis est obligatoire en
+production. En mode global, un seul visiteur peut temporairement bloquer
+les nouvelles connexions pour tous. Voir [redis.md](redis.md) et
+[security.md](security.md).
 
 ## Mot de passe et sessions
 

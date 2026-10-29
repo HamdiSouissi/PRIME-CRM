@@ -19,7 +19,9 @@ os.environ["CORS_ORIGINS"] = "http://localhost:5173"
 # No real provider destinations or local Ollama exceptions from .env/the host.
 os.environ["AI_ALLOWED_ORIGINS"] = ""
 os.environ["AI_ALLOW_LOCAL_OLLAMA"] = "false"
-# Do not inherit a developer's trusted-proxy mode or networks.
+# Do not inherit a developer's login scope or ingress settings.
+os.environ["LOGIN_LIMIT_SCOPE"] = "ip"
+os.environ["PUBLIC_API_ORIGIN"] = ""
 os.environ["CLIENT_IP_MODE"] = ""
 os.environ["CLIENT_IP_PROXY_HEADER"] = ""
 os.environ["CLIENT_IP_TRUSTED_PROXIES"] = ""

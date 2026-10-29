@@ -207,6 +207,8 @@ def test_store_factory_ignores_local_dotenv_and_inherited_database_urls(tmp_path
         "APP_ENV": "broken",
         "DATABASE_URL": "postgresql://fake-user:fake-secret@example.invalid/unused",
         "REDIS_URL": "rediss://default:fake-secret@example.invalid/0",
+        "LOGIN_LIMIT_SCOPE": "inherited-invalid",
+        "PUBLIC_API_ORIGIN": "not-an-origin",
     })
     script = """
 from app.verify_redis import _make_test_store
@@ -216,6 +218,8 @@ store = _make_test_store(
     'primecrm-probe-test',
 )
 from app.services.redis_store import CertifiTLSConnection
+from app.config import settings
+assert settings.LOGIN_LIMIT_SCOPE == 'ip' and settings.PUBLIC_API_ORIGIN == ''
 assert store.client.connection_pool.connection_class is CertifiTLSConnection
 store.close()
 print('isolated settings OK')

@@ -19,11 +19,15 @@ class Settings(BaseSettings):
     # Production requires an authenticated TLS Redis connection.
     REDIS_URL: str = ""
 
-    # The web process must explicitly select how it identifies a login client
-    # in production. No forwarded header is trusted by default.
+    # IP remains the default. Global is an explicit alternative when a safe
+    # client IP cannot be established; it shares one limit among all visitors.
+    LOGIN_LIMIT_SCOPE: Literal["ip", "global"] = "ip"
     CLIENT_IP_MODE: Literal["", "direct", "trusted_proxy"] = ""
     CLIENT_IP_PROXY_HEADER: Literal["", "cf-connecting-ip", "x-real-ip"] = ""
     CLIENT_IP_TRUSTED_PROXIES: str = ""
+    # Used only with the global limiter to generate safe HTTPS redirects. The
+    # operator must enforce HTTPS at every public ingress separately.
+    PUBLIC_API_ORIGIN: str = ""
 
     # An empty list allows no cross-origin browser requests.
     CORS_ORIGINS: str = ""
@@ -69,14 +73,23 @@ class Settings(BaseSettings):
         return [item.strip() for item in value.split(",") if item.strip()]
 
     def validate_web_ip_settings(self) -> None:
-        """Validate the web-only IP trust boundary, without contacting a proxy.
+        """Validate web-only login and redirect settings without network access.
 
-        The offline bootstrap and Alembic do not receive HTTP requests and do
-        not require the deployment's ingress configuration.
+        Offline bootstrap and Alembic do not receive HTTP requests and do not
+        require the deployment's ingress configuration.
         """
         from .core.client_ip import effective_ip_mode
+        from .core.public_origin import public_https_origin
 
-        effective_ip_mode(self)
+        if self.LOGIN_LIMIT_SCOPE == "global":
+            if self.CLIENT_IP_MODE or self.CLIENT_IP_PROXY_HEADER or self.CLIENT_IP_TRUSTED_PROXIES:
+                raise ValueError("CLIENT_IP settings must be empty with the global login limit")
+            if self.APP_ENV == "production" or self.PUBLIC_API_ORIGIN:
+                public_https_origin(self.PUBLIC_API_ORIGIN)
+        else:
+            if self.PUBLIC_API_ORIGIN:
+                raise ValueError("PUBLIC_API_ORIGIN is only used with the global login limit")
+            effective_ip_mode(self)
 
     def validate_runtime(self) -> None:
         """Validate the web app/bootstrap configuration without printing values.

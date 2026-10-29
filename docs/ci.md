@@ -20,9 +20,10 @@ gratuits selon les conditions GitHub. Aucun service payant n'est créé.
   choisie, `Host`, SNI, la confiance et le nom du certificat. Aucun fournisseur
   IA réel ni secret réel n'est utilisé.
 - **Redis et connexions** : un conteneur Redis 7.2 jetable teste le cache
-  chiffré, l'isolation des entreprises, l'invalidation et les compteurs IP et
-  identifiant, y compris sous concurrence. Les tests IP en mémoire vérifient la
-  validation avant parsing, les proxys et les en-têtes falsifiés, le budget
+  chiffré, l'isolation des entreprises, l'invalidation et les compteurs IP,
+  global et identifiant, y compris sous concurrence. Les tests en mémoire
+  vérifient les deux modes, les redirections HTTPS, la validation avant parsing,
+  les proxys et les en-têtes falsifiés, le budget
   local, le cache négatif, les pannes et la réponse anti-énumération ; ils ne
   prouvent pas la configuration de l'hébergeur. La vérification TLS utilise un
   serveur local éphémère. Les tests Redis utilisent un préfixe aléatoire et ne
