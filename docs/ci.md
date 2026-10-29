@@ -112,6 +112,30 @@ répéter ce test sans demander de déploiement backend, inclure aussi
 `[skip render]` dans le message du dernier commit. Il ne s'agit pas d'une
 publication frontend : le workflow ne déploie pas encore le frontend.
 
+### Vérification Netlify en lecture seule
+
+Si le message du dernier commit contient `[netlify preflight]`, après les deux
+jobs de CI et l'approbation de `production-frontend`, le job
+`Netlify · vérification en lecture seule sans publication` vérifie le commit,
+le HEAD de la branche et l'empreinte Alembic, puis utilise le secret
+d'environnement `NETLIFY_AUTH_TOKEN` pour lire le projet Netlify prédéfini.
+Il vérifie l'identifiant et le nom du projet, que les builds Git sont arrêtés,
+et refuse si les publications non-Git ou le déploiement publié sont explicitement
+bloqués. Il sonde ensuite `/login` sans jeton pour confirmer la redirection
+Netlify de protection privée correspondant au projet. Il n'envoie que des GET,
+n'active pas les builds et ne crée ni déploiement ni artefact. Cette sonde
+ponctuelle ne garantit pas que la visibilité restera privée par la suite.
+
+Le jeton personnel Netlify peut donner des droits sur toutes les ressources
+accessibles à son compte ; il doit être enregistré **uniquement** comme secret
+GitHub de l'environnement `production-frontend`, jamais dans le dépôt ou les
+logs. Les réviseurs doivent contrôler le workflow et le commit avant chaque
+approbation ; un administrateur du dépôt peut modifier les règles de protection.
+Prévoir l'expiration et la rotation du jeton. Le contrôle masque les réponses et
+les détails d'erreur, désactive les proxys hérités et refuse les redirections de
+l'API ; il ne prouve pas que le site fonctionnera après un futur déploiement.
+Inclure aussi `[skip render]` pour éviter toute demande Render lors de ce test.
+
 Les tests frontend couvrent l'authentification, la modification du mot de
 passe, la déconnexion, la révocation par l'admin et l'interface IA avec API
 simulée ; ils ne sont pas des tests de bout en bout. La plupart des tests

@@ -106,6 +106,9 @@ répétition frontend utilise une référence du même nom dans l'environnement
 `production-frontend`. Maintenir les deux références cohérentes uniquement
 après une migration expressément autorisée et réellement vérifiée ; ne pas les
 modifier pour contourner un échec. La répétition ne publie rien sur Netlify.
+Une vérification protégée séparée peut lire le projet Netlify et sonder sa
+protection privée ; elle ne publie pas et ne modifie aucune configuration. Voir
+[ci.md](ci.md). Le futur déploiement frontend n'est pas encore implémenté.
 
 ## Demande de déploiement backend
 

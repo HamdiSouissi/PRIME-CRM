@@ -339,6 +339,64 @@ jobs:
           python -m zipfile -t "$RUNNER_TEMP/frontend-release.zip"
           echo 'Rehearsal only: no request to Netlify was made.'
 
+  netlify_readonly_preview:
+    name: Netlify · vérification en lecture seule sans publication
+    # Explicit rehearsal only: the only Netlify requests are GETs. It never
+    # creates a deploy, changes project settings, or publishes an artifact.
+    if: >-
+      github.event_name == 'push' &&
+      github.repository == 'HamdiSouissi/PRIME-CRM' &&
+      github.ref == 'refs/heads/arena/a18b007f-prime-crm' &&
+      contains(github.event.head_commit.message, '[netlify preflight]')
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: prime-crm-netlify-readonly-preview
+      cancel-in-progress: false
+    environment:
+      name: production-frontend
+      deployment: false
+    steps:
+      - name: Check out the tested commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.11'
+
+      - name: Ensure the checkout is the tested commit
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Compare the Alembic fingerprint with the frontend baseline
+        env:
+          EXPECTED_ALEMBIC_FINGERPRINT: ${{ vars.PRODUCTION_ALEMBIC_FINGERPRINT }}
+        run: |
+          if [ -z "$EXPECTED_ALEMBIC_FINGERPRINT" ]; then
+            echo '::error::PRODUCTION_ALEMBIC_FINGERPRINT is missing from the production-frontend configuration.'
+            exit 1
+          fi
+          python tools/migration_fingerprint.py verify --commit "$GITHUB_SHA" --expected "$EXPECTED_ALEMBIC_FINGERPRINT"
+
+      - name: Ensure the approved commit is still the branch head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          branch_head="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/arena/a18b007f-prime-crm" --jq '.object.sha')"
+          if [ "$branch_head" != "$GITHUB_SHA" ]; then
+            echo '::error::The branch changed after this run started; no Netlify request was made.'
+            exit 1
+          fi
+
+      - name: Check the Netlify project and private login without publishing
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+        run: python -m tools.netlify_preflight
+
   request_render_deploy:
     name: Render · demande de déploiement après approbation
     # Never deploy PRs, other branches, or forks. The environment additionally
