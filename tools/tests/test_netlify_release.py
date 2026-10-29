@@ -34,6 +34,7 @@ from tools.netlify_release import (
     release,
     send_upload,
     validate_context,
+    validate_published_deploy,
     validate_release_site,
     verify_branch_head,
     wait_for_publication,
@@ -91,6 +92,10 @@ def private_gate() -> HTTPError:
 
 def deploy(state: str = "ready", **overrides) -> dict:
     return {"id": DEPLOY_ID, "site_id": SITE_ID, "draft": False, "state": state, **overrides}
+
+
+def current_deploy(**overrides) -> dict:
+    return {"id": "previous_deploy", "site_id": SITE_ID, "draft": False, "state": "ready", "locked": False, **overrides}
 
 
 def published() -> dict:
@@ -155,21 +160,61 @@ class NetlifyReleaseTests(unittest.TestCase):
         with self.assertRaises(ReleaseNotSent):
             read_validated_archive(self.archive, COMMIT)
 
-    def test_release_requires_explicit_unlocked_state(self) -> None:
-        validate_release_site(SITE)
+    def test_release_requires_present_acceptable_site_lock_and_valid_project(self) -> None:
+        self.assertEqual(validate_release_site(SITE), "previous_deploy")
+        self.assertEqual(
+            validate_release_site({**SITE, "published_deploy": {"id": "previous_deploy", "locked": None}}),
+            "previous_deploy",
+        )
         invalid = (
             {**SITE, "id": "other"},
             {**SITE, "build_settings": {"stop_builds": False}},
             {**SITE, "prevent_non_git_prod_deploys": True},
+            {**SITE, "prevent_non_git_prod_deploys": None},
             {key: value for key, value in SITE.items() if key != "prevent_non_git_prod_deploys"},
             {**SITE, "published_deploy": None},
             {**SITE, "published_deploy": {"id": "previous_deploy", "locked": True}},
             {**SITE, "published_deploy": {"id": "previous_deploy"}},
+            {**SITE, "published_deploy": {"id": "previous_deploy", "locked": 0}},
+            {**SITE, "published_deploy": {"id": "previous_deploy", "locked": "false"}},
             {**SITE, "published_deploy": {"id": "../other", "locked": False}},
         )
         for site in invalid:
             with self.subTest(keyset=sorted(site)), self.assertRaises(ReleaseNotSent):
                 validate_release_site(site)
+
+    def test_release_cross_checks_current_deploy_with_fixed_read_only_get(self) -> None:
+        for lock in (False, None):
+            opener = Mock()
+            opener.open.return_value = response(current_deploy(locked=lock))
+            validate_published_deploy(TOKEN, "previous_deploy", opener)
+            request = opener.open.call_args.args[0]
+            self.assertEqual(request.get_method(), "GET")
+            self.assertEqual(request.full_url, f"{SITE_API_URL}/deploys/previous_deploy")
+            self.assertEqual(request.get_header("Authorization"), f"Bearer {TOKEN}")
+
+    def test_release_rejects_missing_invalid_or_locked_deploy_details(self) -> None:
+        missing = {key: value for key, value in current_deploy().items() if key != "locked"}
+        cases = (
+            missing,
+            current_deploy(locked=True),
+            current_deploy(locked=0),
+            current_deploy(locked="false"),
+            current_deploy(id="other"),
+            current_deploy(site_id="other"),
+            current_deploy(draft=True),
+            URLError(TOKEN),
+        )
+        for case in cases:
+            opener = Mock()
+            if isinstance(case, Exception):
+                opener.open.side_effect = case
+            else:
+                opener.open.return_value = response(case)
+            with self.subTest(kind=type(case).__name__), self.assertRaises(ReleaseNotSent) as error:
+                validate_published_deploy(TOKEN, "previous_deploy", opener)
+            self.assertNotIn(TOKEN, str(error.exception))
+            opener.open.assert_called_once()
 
     def test_post_is_fixed_zip_body_and_never_contains_token_in_url(self) -> None:
         payload = read_validated_archive(self.archive, COMMIT)
@@ -188,16 +233,17 @@ class NetlifyReleaseTests(unittest.TestCase):
     def test_success_sends_one_post_then_checks_ready_and_published(self) -> None:
         opener, sleeper = Mock(), Mock()
         opener.open.side_effect = [
-            response(SITE), private_gate(), response(branch_head()), response(deploy("processing")),
-            response(deploy("processing")), response(deploy("ready")), response(published()), private_gate(),
+            response(SITE), response(current_deploy()), private_gate(), response(branch_head()),
+            response(deploy("processing")), response(deploy("processing")),
+            response(deploy("ready")), response(published()), private_gate(),
         ]
         release(TOKEN, COMMIT, self.archive, opener, github_token=GITHUB_TOKEN, clock=lambda: 0, sleep=sleeper)
         requests = [call.args[0] for call in opener.open.call_args_list]
-        self.assertEqual([item.get_method() for item in requests], ["GET", "GET", "GET", "POST", "GET", "GET", "GET", "GET"])
+        self.assertEqual([item.get_method() for item in requests], ["GET", "GET", "GET", "GET", "POST", "GET", "GET", "GET", "GET"])
         self.assertEqual(sum(item.get_method() == "POST" for item in requests), 1)
-        self.assertEqual(requests[3].data, self.archive.read_bytes())
-        self.assertEqual(requests[2].full_url, _GITHUB_BRANCH_URL)
-        self.assertEqual(requests[2].get_header("Authorization"), f"Bearer {GITHUB_TOKEN}")
+        self.assertEqual(requests[4].data, self.archive.read_bytes())
+        self.assertEqual(requests[3].full_url, _GITHUB_BRANCH_URL)
+        self.assertEqual(requests[3].get_header("Authorization"), f"Bearer {GITHUB_TOKEN}")
         for request in requests:
             self.assertNotIn(TOKEN, request.full_url)
             self.assertNotIn(GITHUB_TOKEN, request.full_url)
@@ -207,9 +253,19 @@ class NetlifyReleaseTests(unittest.TestCase):
                 self.assertEqual(request.get_header("Authorization"), f"Bearer {TOKEN}")
         sleeper.assert_called_once_with(5)
 
+    def test_observed_null_lock_on_both_reads_allows_one_mock_post(self) -> None:
+        null_site = {**SITE, "published_deploy": {"id": "previous_deploy", "locked": None}}
+        opener = Mock()
+        opener.open.side_effect = [
+            response(null_site), response(current_deploy(locked=None)), private_gate(), response(branch_head()),
+            response(deploy()), response(deploy()), response(published()), private_gate(),
+        ]
+        release(TOKEN, COMMIT, self.archive, opener, github_token=GITHUB_TOKEN, clock=lambda: 0, sleep=Mock())
+        self.assertEqual(sum(call.args[0].get_method() == "POST" for call in opener.open.call_args_list), 1)
+
     def test_preflight_failure_never_posts(self) -> None:
         opener = Mock()
-        opener.open.side_effect = [response(SITE), response(b"public page")]
+        opener.open.side_effect = [response(SITE), response(current_deploy()), response(b"public page")]
         with self.assertRaises(ReleaseNotSent):
             release(TOKEN, COMMIT, self.archive, opener, github_token=GITHUB_TOKEN)
         self.assertTrue(all(call.args[0].get_method() == "GET" for call in opener.open.call_args_list))
@@ -218,6 +274,12 @@ class NetlifyReleaseTests(unittest.TestCase):
         with self.assertRaises(ReleaseNotSent):
             release(TOKEN, COMMIT, self.archive, opener, github_token=GITHUB_TOKEN)
         opener.open.assert_called_once()
+        for detail in (current_deploy(locked=True), current_deploy(site_id="other"), current_deploy(locked="false")):
+            opener = Mock()
+            opener.open.side_effect = [response(SITE), response(detail)]
+            with self.subTest(detail=detail), self.assertRaises(ReleaseNotSent):
+                release(TOKEN, COMMIT, self.archive, opener, github_token=GITHUB_TOKEN)
+            self.assertTrue(all(call.args[0].get_method() == "GET" for call in opener.open.call_args_list))
 
     def test_branch_check_requires_expected_commit_and_never_leaks_tokens(self) -> None:
         cases = (
@@ -246,10 +308,10 @@ class NetlifyReleaseTests(unittest.TestCase):
 
     def test_branch_changed_after_preflight_never_sends_post(self) -> None:
         opener = Mock()
-        opener.open.side_effect = [response(SITE), private_gate(), response(branch_head("f" * 40))]
+        opener.open.side_effect = [response(SITE), response(current_deploy()), private_gate(), response(branch_head("f" * 40))]
         with self.assertRaises(ReleaseNotSent):
             release(TOKEN, COMMIT, self.archive, opener, github_token=GITHUB_TOKEN)
-        self.assertEqual([call.args[0].get_method() for call in opener.open.call_args_list], ["GET", "GET", "GET"])
+        self.assertEqual([call.args[0].get_method() for call in opener.open.call_args_list], ["GET", "GET", "GET", "GET"])
 
     def test_post_errors_are_uncertain_never_retried_or_leaked(self) -> None:
         request = build_upload_request(TOKEN, COMMIT, read_validated_archive(self.archive, COMMIT))
@@ -291,7 +353,7 @@ class NetlifyReleaseTests(unittest.TestCase):
     def test_privacy_failure_after_publication_is_reported_separately(self) -> None:
         opener = Mock()
         opener.open.side_effect = [
-            response(SITE), private_gate(), response(branch_head()), response(deploy()),
+            response(SITE), response(current_deploy()), private_gate(), response(branch_head()), response(deploy()),
             response(deploy()), response(published()), response(b"public"),
         ]
         with self.assertRaises(ReleasePublishedPrivacyUnknown):
@@ -312,7 +374,8 @@ class NetlifyReleaseTests(unittest.TestCase):
 
     def test_cli_whitelists_preflight_hints_without_echoing_untrusted_errors(self) -> None:
         cases = (
-            ("An unlocked production deployment was not confirmed", "publishing flags are missing or not explicitly unlocked"),
+            ("An allowed production deployment state was not confirmed", "publishing fields are missing, invalid, or indicate a lock"),
+            ("The published deployment details could not be confirmed", "deployment details could not be confirmed"),
             ("The approved commit is not the current branch head", "branch head could not be confirmed"),
             (f"unsafe {TOKEN} {GITHUB_TOKEN}", "Release validation failed"),
         )

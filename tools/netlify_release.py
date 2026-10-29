@@ -146,8 +146,19 @@ def read_validated_archive(path: Path, commit: str) -> bytes:
     return payload
 
 
-def validate_release_site(site: dict) -> None:
-    """Require explicit evidence that the existing production deploy is unlocked."""
+def _allowed_lock_state(deploy: dict) -> bool:
+    """Accept only a present false or null; never coerce missing/invalid values.
+
+    The Netlify CLI currently treats null as not locked when deciding whether
+    to publish (netlify/cli deploy.ts at 7346ce3, lines 1428-1429). This
+    response shape is not a guarantee of actual state; the requested deploy must
+    still be confirmed as published after the POST.
+    """
+    return "locked" in deploy and (deploy["locked"] is False or deploy["locked"] is None)
+
+
+def validate_release_site(site: dict) -> str:
+    """Validate the project and return its current published deployment ID."""
     try:
         validate_site(site)
     except PreflightError:
@@ -156,11 +167,22 @@ def validate_release_site(site: dict) -> None:
     if (
         site.get("prevent_non_git_prod_deploys") is not False
         or not isinstance(published, dict)
-        or published.get("locked") is not False
+        or not _allowed_lock_state(published)
         or not isinstance(published.get("id"), str)
         or not _DEPLOY_ID.fullmatch(published["id"])
     ):
-        raise ReleaseNotSent("An unlocked production deployment was not confirmed")
+        raise ReleaseNotSent("An allowed production deployment state was not confirmed")
+    return published["id"]
+
+
+def validate_published_deploy(token: str, deploy_id: str, opener) -> None:
+    """Cross-check the exact published deploy's lock field using a second GET."""
+    try:
+        detail = get_deploy(token, deploy_id, opener)
+    except ReleaseOutcomeUnknown:
+        raise ReleaseNotSent("The published deployment details could not be confirmed") from None
+    if not _allowed_lock_state(detail):
+        raise ReleaseNotSent("An allowed production deployment state was not confirmed")
 
 
 def build_upload_request(token: str, commit: str, payload: bytes) -> Request:
@@ -304,7 +326,8 @@ def release(token: str, commit: str, archive: Path, opener, *, github_token: str
     payload = read_validated_archive(archive, commit)
     request = build_upload_request(token, commit, payload)
     try:
-        validate_release_site(get_site(token, opener))
+        current_deploy_id = validate_release_site(get_site(token, opener))
+        validate_published_deploy(token, current_deploy_id, opener)
         check_private_login(opener)
         verify_branch_head(github_token, commit, opener)
     except ReleaseNotSent:
@@ -348,7 +371,8 @@ def main() -> int:
     except ReleaseNotSent as error:
         # Whitelist fixed explanations rather than echoing arbitrary exceptions.
         hints = {
-            "An unlocked production deployment was not confirmed": "Netlify publishing flags are missing or not explicitly unlocked",
+            "An allowed production deployment state was not confirmed": "Netlify publishing fields are missing, invalid, or indicate a lock",
+            "The published deployment details could not be confirmed": "The published Netlify deployment details could not be confirmed",
             "The Netlify project checks did not pass": "Netlify project, stopped-builds or publishing checks did not pass",
             "The Netlify read-only preflight did not pass": "Netlify project lookup or anonymous privacy probe did not pass",
             "The approved commit is not the current branch head": "The approved GitHub branch head could not be confirmed",

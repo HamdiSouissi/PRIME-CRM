@@ -176,11 +176,20 @@ contient :
 
 La variable de dépôt publique `VITE_API_URL` doit toujours valoir
 `https://prime-crm-cqi3.onrender.com`. Vérifier également le plan et le solde
-Netlify, la visibilité privée et l'absence de verrouillage de publication. Une
-valeur GitHub manquante, un schéma de réponse Netlify inattendu ou un champ
-`prevent_non_git_prod_deploys` / `published_deploy.locked` non explicitement
-`false` bloque la demande avant le POST ; ces champs dépendent de l'API Netlify.
-Ne pas activer les builds Git pour contourner un échec.
+Netlify, la visibilité privée et l'absence de verrouillage de publication dans
+**Deploys** avant d'approuver. Ne pas activer les builds Git pour contourner
+un échec.
+
+Le contrôle exige que `prevent_non_git_prod_deploys` soit explicitement `false`.
+Pour `locked`, l'API du projet a renvoyé explicitement `null`, aussi bien dans
+le site que dans le détail du déploiement publié. Le
+[CLI officiel Netlify](https://github.com/netlify/cli/blob/7346ce3b7a4b7cea87606bce62dc5a04fb3618ac/src/commands/deploy/deploy.ts#L1428-L1429)
+traite `null` comme non verrouillé dans sa décision de publication. Le job
+exige donc le champ dans **chacune des deux réponses**, avec la valeur `false`
+ou `null`, et rejette `true`, un champ absent ou une valeur inattendue. Cela
+ne prouve pas à lui seul l'état réel de publication : vérifiez l'interface et
+le déploiement publié, avant et après. Un schéma de réponse inattendu bloque
+la demande avant le POST.
 
 Après approbation, le job vérifie le SHA testé, l'empreinte Alembic, puis que
 le SHA backend enregistré est un ancêtre et que les arbres Git `backend` sont
