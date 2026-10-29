@@ -6,10 +6,12 @@ import hmac
 import json
 import re
 import secrets
+import ssl
 import unicodedata
 from functools import lru_cache
 from urllib.parse import urlsplit
 
+import certifi
 import redis
 from cryptography.fernet import Fernet, InvalidToken
 from redis.backoff import NoBackoff
@@ -34,6 +36,34 @@ if ttl < 0 then
 end
 return {count, ttl}
 """
+
+
+class CertifiTLSConnection(redis.connection.Connection):
+    """A verified Redis TLS connection using only certifi's public CA bundle.
+
+    redis-py 5.2.1's ssl_ca_certs adds certificates to the system context; it
+    does not replace that context. This explicit context avoids also selecting
+    an expired CA from the Windows system store while still requiring a valid
+    certificate chain and a matching hostname.
+    """
+
+    def _connect(self):
+        ca_bundle = certifi.where()
+        if not ca_bundle:
+            # An empty cafile would make create_default_context load OS roots.
+            raise ssl.SSLError("Redis CA bundle is unavailable")
+        context = ssl.create_default_context(cafile=ca_bundle)
+        context.check_hostname = True
+        context.verify_mode = ssl.CERT_REQUIRED
+        # Do not expose Redis TLS session keys through SSLKEYLOGFILE.
+        if hasattr(context, "keylog_filename"):
+            context.keylog_filename = None
+        sock = super()._connect()
+        try:
+            return context.wrap_socket(sock, server_hostname=self.host)
+        except BaseException:
+            sock.close()
+            raise
 
 
 class LoginRateLimited(Exception):
@@ -135,8 +165,8 @@ def create_redis_store(url: str, secret_key: str, prefix: str = "primecrm:v1") -
         "health_check_interval": 0,
     }
     if parsed.scheme == "rediss":
-        # redis-py verifies certificates by default but not hostnames by default.
-        options.update(ssl_cert_reqs="required", ssl_check_hostname=True)
+        # ConnectionPool.from_url otherwise selects redis-py's SSLConnection.
+        options["connection_class"] = CertifiTLSConnection
     return RedisStore(redis.Redis.from_url(url, **options), secret_key, prefix)
 
 

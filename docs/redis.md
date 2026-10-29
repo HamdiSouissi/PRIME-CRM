@@ -11,6 +11,12 @@ sécurité.**
   `rediss://` **authentifiée**, sans paramètres de requête ni fragment et avec
   la base `/0` ou sans chemin. Le client vérifie le certificat **et le nom
   d'hôte**, avec des délais de connexion et d'opération de deux secondes.
+  Pour toute connexion Redis TLS, il utilise uniquement le bundle de CA publiques
+  `certifi` épinglé dans `backend/requirements.txt`, plutôt que le magasin CA
+  de l'OS ; il ne fait aucun repli vers ce magasin. Cette règle ne change pas
+  la confiance TLS de PostgreSQL ou des autres clients. Une CA privée n'est pas
+  prise en charge pour Redis par cette configuration ; mettre à jour et tester
+  régulièrement la version de `certifi` avant que son bundle ne vieillisse.
 - La valeur complète contient un secret : la fournir via le gestionnaire de
   secrets de l'hébergeur (par exemple **Render → service → Environment**),
   jamais dans Git, une conversation ou un journal. Ne pas utiliser les variables
@@ -131,9 +137,11 @@ En cas d'échec du certificat, lancer `python -m app.verify_redis --tls-diagnost
 depuis `backend` avec l'environnement Python du projet. À l'invite masquée,
 entrer uniquement l'**Endpoint** Upstash, sans URL ni token, et ajouter `:port`
 si le port affiché diffère de `6379`. Le mode effectue uniquement une
-négociation TLS avec vérification du certificat et du nom d'hôte. Il n'envoie
-**ni authentification, ni commande Redis**, n'accède pas à PostgreSQL et ne
-modifie aucune clé.
+négociation TLS avec vérification du certificat et du nom d'hôte. Ce mode
+utilise volontairement les CA système pour le diagnostic ; il n'utilise pas le
+bundle `certifi` du client Redis et son résultat peut donc différer du test
+applicatif. Il n'envoie **ni authentification, ni commande Redis**, n'accède
+pas à PostgreSQL et ne modifie aucune clé.
 
 La sortie indique le nombre de certificats CA chargés, la présence éventuelle
 des variables `SSL_CERT_FILE` et `SSL_CERT_DIR` (sans leurs valeurs), l'heure

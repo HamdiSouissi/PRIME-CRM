@@ -162,7 +162,7 @@ def safe_error_hint(error: Exception) -> str:
     if isinstance(error, ConnectionError):
         details = str(error).casefold().replace("_", " ")  # inspected locally, never logged or returned
         if "certificate verify failed" in details or "hostname mismatch" in details:
-            return "certificat TLS ou nom d'hôte non vérifié ; vérifiez les certificats système."
+            return "certificat TLS ou nom d'hôte non vérifié ; vérifiez la date, l'Endpoint et certifi."
         return "connexion réseau ou TLS impossible ; vérifiez DNS et pare-feu."
     if isinstance(error, RedisError):
         return "opération Redis refusée ; vérifiez la disponibilité et les quotas Free."

@@ -2,10 +2,12 @@
 
 import os
 from pathlib import Path
+import ssl
 import subprocess
 import sys
 
 import pytest
+import redis
 from fastapi import HTTPException
 from redis.exceptions import RedisError
 
@@ -13,7 +15,8 @@ from app import main as main_module
 from app.config import Settings, settings
 from app.routers.admin import health_check
 from app.routers.auth import enforce_login_limit
-from app.services.redis_store import LoginRateLimited, create_redis_store
+from app.services import redis_store as redis_service
+from app.services.redis_store import CertifiTLSConnection, LoginRateLimited, create_redis_store
 
 
 TEST_KEY = "ci-only-signing-key-with-more-than-thirty-two-characters"
@@ -53,11 +56,63 @@ def test_production_accepts_redis_tls_url_and_client_checks_hostname():
     url = "rediss://default:test-only-password@redis.example.invalid:6379/0"
     production_config(REDIS_URL=url).validate_runtime()
     store = create_redis_store(url, TEST_KEY)
-    kwargs = store.client.connection_pool.connection_kwargs
-    assert kwargs["ssl_cert_reqs"] == "required"
-    assert kwargs["ssl_check_hostname"] is True
-    assert kwargs["socket_connect_timeout"] == 2
+    pool = store.client.connection_pool
+    assert pool.connection_class is CertifiTLSConnection
+    assert pool.connection_kwargs["socket_connect_timeout"] == 2
+    assert pool.connection_kwargs["socket_timeout"] == 2
     store.close()
+
+
+def test_redis_tls_uses_only_the_explicit_bundle_and_requires_hostname(monkeypatch):
+    fake_socket = object()
+
+    class FakeContext:
+        check_hostname = False
+        verify_mode = None
+        keylog_filename = "must-not-record-tls-secrets"
+
+        def wrap_socket(self, sock, server_hostname):
+            assert sock is fake_socket and server_hostname == "redis.example.invalid"
+            assert self.check_hostname is True and self.verify_mode == ssl.CERT_REQUIRED
+            assert self.keylog_filename is None
+            return "wrapped"
+
+    context = FakeContext()
+    monkeypatch.setattr(redis_service.certifi, "where", lambda: "private-fake-ca-file")
+
+    def make_context(*, cafile):
+        assert cafile == "private-fake-ca-file"
+        return context
+
+    monkeypatch.setattr(redis_service.ssl, "create_default_context", make_context)
+    monkeypatch.setattr(redis.connection.Connection, "_connect", lambda self: fake_socket)
+    assert CertifiTLSConnection(host="redis.example.invalid")._connect() == "wrapped"
+
+
+def test_redis_tls_rejects_an_empty_bundle_before_opening_socket(monkeypatch):
+    monkeypatch.setattr(redis_service.certifi, "where", lambda: "")
+    monkeypatch.setattr(redis.connection.Connection, "_connect", lambda self: pytest.fail("Socket must not open"))
+    with pytest.raises(ssl.SSLError, match="CA bundle"):
+        CertifiTLSConnection(host="redis.example.invalid")._connect()
+
+
+def test_redis_tls_closes_the_socket_if_the_handshake_fails(monkeypatch):
+    class FakeSocket:
+        closed = False
+
+        def close(self): self.closed = True
+
+    class FakeContext:
+        def wrap_socket(self, *args, **kwargs):
+            raise ssl.SSLError("fake test error")
+
+    sock = FakeSocket()
+    monkeypatch.setattr(redis_service.certifi, "where", lambda: "private-fake-ca-file")
+    monkeypatch.setattr(redis_service.ssl, "create_default_context", lambda **kwargs: FakeContext())
+    monkeypatch.setattr(redis.connection.Connection, "_connect", lambda self: sock)
+    with pytest.raises(ssl.SSLError, match="fake test error"):
+        CertifiTLSConnection(host="redis.example.invalid")._connect()
+    assert sock.closed
 
 
 def test_development_may_run_without_redis_but_rejects_malformed_url():

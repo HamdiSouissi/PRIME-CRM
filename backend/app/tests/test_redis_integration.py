@@ -13,6 +13,7 @@ import threading
 import time
 from urllib.parse import urlsplit
 
+import certifi
 import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -282,18 +283,27 @@ def test_tls_verifies_the_server_hostname(redis_store, tmp_path, monkeypatch):
     proxy.redis_port = urlsplit(os.environ["CI_TEST_REDIS_URL"]).port
     thread = threading.Thread(target=proxy.serve_forever, daemon=True)
     thread.start()
+    # Even though the OS trusts our test CA, certifi's real bundle does not.
     monkeypatch.setenv("SSL_CERT_FILE", str(ca_file))
     port = proxy.server_address[1]
-    good = create_redis_store(f"rediss://localhost:{port}/0", TEST_KEY, redis_store.prefix)
-    bad = create_redis_store(f"rediss://127.0.0.1:{port}/0", TEST_KEY, redis_store.prefix)
+    untrusted = good = bad = None
     try:
+        untrusted = create_redis_store(f"rediss://localhost:{port}/0", TEST_KEY, redis_store.prefix)
+        with pytest.raises(RedisError):
+            untrusted.client.ping()
+
+        # Only the test's isolated certifi bundle contains the disposable CA.
+        monkeypatch.setattr(certifi, "where", lambda: str(ca_file))
+        good = create_redis_store(f"rediss://localhost:{port}/0", TEST_KEY, redis_store.prefix)
+        bad = create_redis_store(f"rediss://127.0.0.1:{port}/0", TEST_KEY, redis_store.prefix)
         assert good.client.ping() is True
         # The CA is trusted, but 127.0.0.1 does not match the localhost-only SAN.
         with pytest.raises(RedisError):
             bad.client.ping()
     finally:
-        good.close()
-        bad.close()
+        for store in (untrusted, good, bad):
+            if store is not None:
+                store.close()
         proxy.shutdown()
         proxy.server_close()
         thread.join(timeout=3)

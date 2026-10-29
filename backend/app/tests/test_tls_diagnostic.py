@@ -18,6 +18,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
 from app import tls_diagnostic, verify_redis
+from app.services.redis_store import CertifiTLSConnection
 
 
 def _certificates(tmp_path, *, expired_leaf=False, expired_system_ca=False, expired_intermediate=False):
@@ -113,6 +114,10 @@ def test_expired_presented_leaf_is_rejected_without_commands(version, tmp_path, 
     with _local_tls_server(leaf_file, key_file, version) as server:
         assert tls_diagnostic.diagnose_certificate_path(("localhost", server.server_address[1])) == 1
         output = capsys.readouterr().out
+        connection = CertifiTLSConnection(host="localhost", port=server.server_address[1], socket_timeout=2)
+        with pytest.raises(ssl.SSLCertVerificationError) as error:
+            connection._connect()
+        assert error.value.verify_code == 10
     assert "RESULTAT_CA_SYSTEME=ECHEC_CERTIFICAT" in output and "CODE_CA_SYSTEME=10" in output
     assert "RESULTAT_CA_CERTIFI=ECHEC_CERTIFICAT" in output and "CODE_CA_CERTIFI=10" in output
     assert "DATES_PRESENTEES_NON_AUTHENTIFIEES=OUI" in output
@@ -147,10 +152,20 @@ def test_expired_local_trust_anchor_is_distinguishable_from_presented_leaf(tmp_p
     with _local_tls_server(leaf_file, key_file, ssl.TLSVersion.TLSv1_2) as server:
         assert tls_diagnostic.diagnose_certificate_path(("localhost", server.server_address[1])) == 1
         output = capsys.readouterr().out
+
+        # The Redis client must use the same isolated trust bundle as the
+        # successful comparison, not append it to the expired system roots.
+        keylog_file = tmp_path / "tls-session-keys.log"
+        monkeypatch.setenv("SSLKEYLOGFILE", str(keylog_file))
+        connection = CertifiTLSConnection(host="localhost", port=server.server_address[1], socket_timeout=2)
+        with connection._connect():
+            pass
     assert "RESULTAT_CA_SYSTEME=ECHEC_CERTIFICAT" in output and "CODE_CA_SYSTEME=10" in output
     assert "CERTIFICAT_TERMINAL_EXPIRE=NON" in output and "AUTRES_CERTIFICATS_PRESENTES_EXPIRES=0" in output
     assert "RESULTAT_CA_CERTIFI=SUCCES" in output
     assert not server.application_data and "localhost" not in output
+    if keylog_file.exists():
+        assert all(not line or line.startswith("#") for line in keylog_file.read_text().splitlines())
 
 
 def test_wrong_hostname_is_not_accepted(tmp_path, monkeypatch, capsys):

@@ -215,9 +215,8 @@ store = _make_test_store(
     'test-only-signing-key-abcdefghijklmnopqrstuvwxyz0123456789',
     'primecrm-probe-test',
 )
-options = store.client.connection_pool.connection_kwargs
-assert options['ssl_cert_reqs'] == 'required'
-assert options['ssl_check_hostname'] is True
+from app.services.redis_store import CertifiTLSConnection
+assert store.client.connection_pool.connection_class is CertifiTLSConnection
 store.close()
 print('isolated settings OK')
 """
