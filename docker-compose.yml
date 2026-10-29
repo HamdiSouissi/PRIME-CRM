@@ -47,6 +47,8 @@ services:
         condition: service_healthy
     environment:
       APP_ENV: development
+      # The local frontend proxy shares one socket IP; this is development only.
+      CLIENT_IP_MODE: direct
       DATABASE_URL: postgresql://${POSTGRES_USER:-prime}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in an ignored .env file}@db:5432/${POSTGRES_DB:-primecrm}
       REDIS_URL: redis://redis:6379/0
       SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in an ignored .env file}
@@ -72,7 +74,7 @@ services:
       retries: 3
       start_period: 20s
     command: >
-      sh -c "alembic upgrade head && python -m app.bootstrap && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+      sh -c "alembic upgrade head && python -m app.bootstrap && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --no-proxy-headers"
 
   frontend:
     build: ./frontend

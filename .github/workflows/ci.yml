@@ -157,6 +157,8 @@ jobs:
           POSTGRES_PASSWORD: ci-only-password
           REDIS_URL: rediss://default:ci-only-password@redis.example.invalid:6379/0
           SECRET_KEY: ci-only-signing-key-with-more-than-thirty-two-characters
+          # Syntax check only; no proxy or production ingress is validated here.
+          CLIENT_IP_MODE: direct
         run: |
           docker compose -f docker-compose.yml config --quiet
           docker compose -f docker-compose.prod.yml config --quiet

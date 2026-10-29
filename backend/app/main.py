@@ -12,7 +12,9 @@ from .config import settings
 # Validate before constructing a database engine or importing API routers.
 # Alembic imports the configuration but does not import this module.
 settings.validate_runtime()
+settings.validate_web_ip_settings()
 
+from .core.login_guard import LocalLoginGuard, LoginIPMiddleware, TrustedProxyHTTPSMiddleware
 from .database import SessionLocal
 from .models.user import User
 from .schema import require_current_schema
@@ -31,12 +33,35 @@ app = FastAPI(
     openapi_url="/openapi.json",
 )
 
+# Keep this inside CORS and security-header middleware, so early 429/503
+# responses still receive the same browser and no-store headers.
+app.state.login_ip_guard = LocalLoginGuard()
+
+
+def _login_store():
+    # FastAPI dependency overrides are also honored by this pre-validation
+    # middleware, allowing isolated tests without any hosted Redis connection.
+    provider = app.dependency_overrides.get(get_redis_store, get_redis_store)
+    return provider()
+
+
+app.add_middleware(
+    LoginIPMiddleware,
+    config=settings,
+    store_provider=_login_store,
+    guard=app.state.login_ip_guard,
+)
+# Production is required to terminate TLS at the trusted public ingress.
+# Restore HTTPS for redirects without trusting forwarded-proto headers.
+app.add_middleware(TrustedProxyHTTPSMiddleware, config=settings)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Retry-After"],
 )
 
 
@@ -49,10 +74,12 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     if request.url.path.startswith(f"{settings.API_V1_STR}/auth/"):
-        # Authentication responses must not be retained by shared caches.
+        # Authentication responses must not be retained by shared caches or
+        # reveal precise server-side timings useful for account enumeration.
         response.headers["Cache-Control"] = "no-store"
         response.headers["Pragma"] = "no-cache"
-    response.headers["X-Process-Time"] = str(time.time() - start)
+    else:
+        response.headers["X-Process-Time"] = str(time.time() - start)
     return response
 
 

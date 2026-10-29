@@ -31,14 +31,18 @@ from app.database import Base, get_db
 from app.main import app
 from app.services.redis_store import (
     CACHE_SECONDS,
+    IP_LOGIN_ATTEMPTS,
+    IP_LOGIN_WINDOW_SECONDS,
     LOGIN_ATTEMPTS,
     LOGIN_WINDOW_SECONDS,
     PASSWORD_CHANGE_ATTEMPTS,
     PASSWORD_CHANGE_WINDOW_SECONDS,
     LoginRateLimited,
+    RedisStore,
     create_redis_store,
     get_redis_store,
 )
+from app.tests.asgi_helpers import WithClientIP
 
 
 TEST_KEY = "test-only-signing-key-with-more-than-32-characters"
@@ -58,7 +62,8 @@ def api(redis_store, monkeypatch):
     monkeypatch.setitem(app.dependency_overrides, get_db, override_db)
     monkeypatch.setitem(app.dependency_overrides, get_redis_store, lambda: redis_store)
     monkeypatch.setattr(settings, "ALLOW_PUBLIC_REGISTRATION", True)
-    client = TestClient(app)
+    app.state.login_ip_guard.reset()
+    client = TestClient(WithClientIP(app, "127.0.0.1"))
 
     def register(email, company):
         response = client.post("/api/v1/auth/register", json={
@@ -160,6 +165,52 @@ def test_rate_limit_is_atomic_across_concurrent_calls_and_repairs_ttl(redis_stor
     assert 0 < redis_store.client.ttl(no_ttl_key) <= LOGIN_WINDOW_SECONDS
 
 
+def test_ip_rate_limit_is_atomic_shared_and_pseudonymized(redis_store):
+    client_ip = "192.0.2.84"  # Documentation address, never contacted.
+    other_worker = RedisStore(redis_store.client, TEST_KEY, redis_store.prefix)
+
+    def attempt(number):
+        try:
+            (redis_store if number % 2 else other_worker).record_login_ip(client_ip)
+            return True
+        except LoginRateLimited:
+            return False
+
+    with ThreadPoolExecutor(max_workers=20) as workers:
+        results = list(workers.map(attempt, range(50)))
+    assert sum(results) == IP_LOGIN_ATTEMPTS
+    key = redis_store._login_ip_key(client_ip)
+    assert client_ip not in key
+    assert redis_store._login_ip_key("::ffff:192.0.2.84") == key
+    assert redis_store._login_ip_key("2001:db8::1") == redis_store._login_ip_key("2001:0db8:0:0:0:0:0:1")
+    assert 0 < redis_store.client.ttl(key) <= IP_LOGIN_WINDOW_SECONDS
+    assert int(redis_store.client.get(key)) == 50
+    redis_store.record_login_ip("192.0.2.85")
+
+
+def test_real_redis_ip_limit_covers_both_routes_before_body_validation(redis_store, api):
+    client, _, _ = api
+    for number in range(IP_LOGIN_ATTEMPTS):
+        if number % 2:
+            response = client.post("/api/v1/auth/login", data={})
+        else:
+            response = client.post("/api/v1/auth/login-json", json={})
+        assert response.status_code == 422
+    blocked = client.post("/api/v1/auth/login-json", json={})
+    assert blocked.status_code == 429 and int(blocked.headers["Retry-After"]) > 0
+    key = redis_store._login_ip_key("127.0.0.1")
+    assert int(redis_store.client.get(key)) == IP_LOGIN_ATTEMPTS + 1
+    assert list(redis_store.client.scan_iter(match=f"{redis_store.prefix}:login:*")) == []
+    for _ in range(70):
+        assert client.post("/api/v1/auth/login-json", json={}).status_code == 429
+    assert int(redis_store.client.get(key)) == IP_LOGIN_ATTEMPTS + 1  # Local denial cache skipped Redis.
+    other = TestClient(WithClientIP(app, "127.0.0.2"))
+    try:
+        assert other.post("/api/v1/auth/login-json", json={}).status_code == 422
+    finally:
+        other.close()
+
+
 def test_both_login_routes_share_a_limit_and_other_accounts_are_unaffected(redis_store, api):
     client, _, _ = api
     email = "unknown@example.com"
@@ -217,6 +268,8 @@ def test_password_change_limit_is_separate_and_pseudonymized(redis_store, api):
     assert 0 < redis_store.client.ttl(key) <= PASSWORD_CHANGE_WINDOW_SECONDS
     # Neither a fresh login for this account nor another user's counter is blocked.
     assert client.post("/api/v1/auth/login-json", json={"email": "first@example.com", "password": TEST_PASSWORD}).status_code == 200
+    # Successful logins also consume the pre-validation IP counter.
+    assert int(redis_store.client.get(redis_store._login_ip_key("127.0.0.1"))) == 1
     assert client.post("/api/v1/auth/change-password", headers=other_headers, json={
         "old_password": wrong_password, "new_password": new_password,
     }).status_code == 400

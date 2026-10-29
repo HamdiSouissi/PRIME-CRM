@@ -19,6 +19,12 @@ class Settings(BaseSettings):
     # Production requires an authenticated TLS Redis connection.
     REDIS_URL: str = ""
 
+    # The web process must explicitly select how it identifies a login client
+    # in production. No forwarded header is trusted by default.
+    CLIENT_IP_MODE: Literal["", "direct", "trusted_proxy"] = ""
+    CLIENT_IP_PROXY_HEADER: Literal["", "cf-connecting-ip", "x-real-ip"] = ""
+    CLIENT_IP_TRUSTED_PROXIES: str = ""
+
     # An empty list allows no cross-origin browser requests.
     CORS_ORIGINS: str = ""
     ALLOW_PUBLIC_REGISTRATION: bool = False
@@ -61,6 +67,16 @@ class Settings(BaseSettings):
                 raise ValueError("CORS_ORIGINS must contain only origin strings")
             return [item.strip() for item in parsed if item.strip()]
         return [item.strip() for item in value.split(",") if item.strip()]
+
+    def validate_web_ip_settings(self) -> None:
+        """Validate the web-only IP trust boundary, without contacting a proxy.
+
+        The offline bootstrap and Alembic do not receive HTTP requests and do
+        not require the deployment's ingress configuration.
+        """
+        from .core.client_ip import effective_ip_mode
+
+        effective_ip_mode(self)
 
     def validate_runtime(self) -> None:
         """Validate the web app/bootstrap configuration without printing values.

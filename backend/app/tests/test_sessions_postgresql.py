@@ -25,6 +25,7 @@ from app.models.company import Company
 from app.models.user import User
 from app.routers import auth as auth_router
 from app.services.redis_store import PASSWORD_CHANGE_ATTEMPTS, get_redis_store
+from app.tests.asgi_helpers import WithClientIP
 
 
 ADMIN_PASSWORD = "fictitious-postgres-admin-password"
@@ -84,9 +85,10 @@ def postgres_harness(monkeypatch):
         monkeypatch.setattr(settings, "APP_ENV", "test")
         monkeypatch.setitem(app.dependency_overrides, get_db, override_db)
         monkeypatch.setitem(app.dependency_overrides, get_redis_store, lambda: None)
+        app.state.login_ip_guard.reset()
 
         def new_client():
-            client = TestClient(app)
+            client = TestClient(WithClientIP(app, "127.0.0.1"))
             clients.append(client)
             return client
 

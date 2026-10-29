@@ -19,9 +19,13 @@ gratuits selon les conditions GitHub. Aucun service payant n'est créé.
   erreurs. Un serveur TLS réel sur boucle locale avec CA éphémère vérifie l'IP
   choisie, `Host`, SNI, la confiance et le nom du certificat. Aucun fournisseur
   IA réel ni secret réel n'est utilisé.
-- **Redis** : un conteneur Redis 7.2 jetable teste le cache chiffré, l'isolation
-  des entreprises, l'invalidation, la limitation concurrente, les pannes et la
-  vérification TLS locale. Les tests utilisent un préfixe aléatoire et ne
+- **Redis et connexions** : un conteneur Redis 7.2 jetable teste le cache
+  chiffré, l'isolation des entreprises, l'invalidation et les compteurs IP et
+  identifiant, y compris sous concurrence. Les tests IP en mémoire vérifient la
+  validation avant parsing, les proxys et les en-têtes falsifiés, le budget
+  local, le cache négatif, les pannes et la réponse anti-énumération ; ils ne
+  prouvent pas la configuration de l'hébergeur. La vérification TLS utilise un
+  serveur local éphémère. Les tests Redis utilisent un préfixe aléatoire et ne
   lancent jamais `FLUSHDB` ; aucun Redis hébergé n'est contacté.
 - **Migrations** : PostgreSQL 16 est créé pour le job, puis détruit. Le workflow
   teste la migration d'un compte fictif depuis `20261028_01` vers la nouvelle

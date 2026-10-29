@@ -1,9 +1,10 @@
 # Sécurité : état et prérequis
 
 > L'application n'est pas encore prête pour une exposition publique. Redis
-> est intégré techniquement ; son raccordement au déploiement reste à valider.
-> La protection par adresse IP, la défense réseau complémentaire pour l'IA,
-> la récupération des comptes et l'audit des dépendances restent à traiter.
+> et la limitation par adresse IP sont intégrés techniquement, mais leur
+> raccordement et la frontière de confiance du proxy de l'hébergeur restent à
+> valider. La défense réseau complémentaire pour l'IA, la récupération des
+> comptes, les sauvegardes et l'audit des dépendances restent à traiter.
 
 ## Configuration du backend
 
@@ -15,6 +16,9 @@
 | `REDIS_URL` | Obligatoire en production : URL TCP `rediss://` authentifiée, avec vérification du certificat et du nom d'hôte. Ne jamais la partager. |
 | `CORS_ORIGINS` | Origines exactes séparées par des virgules ; vide signifie aucune origine cross-origin. En production, seules les origines HTTPS sont acceptées, sans `*` ni chemin. |
 | `ALLOW_PUBLIC_REGISTRATION` | `false` par défaut. La valeur `true` est refusée en production. |
+| `CLIENT_IP_MODE` | Obligatoire pour démarrer le serveur web de production : `direct` ou `trusted_proxy` selon un trajet réseau vérifié. Le bootstrap n'en a pas besoin. |
+| `CLIENT_IP_PROXY_HEADER` | En mode proxy seulement : `cf-connecting-ip` ou `x-real-ip`, selon l'en-tête réécrit et garanti par le proxy immédiat. |
+| `CLIENT_IP_TRUSTED_PROXIES` | En mode proxy seulement : IP/CIDR stricts du pair TCP immédiat, séparés par des virgules ; aucune valeur par défaut et aucun `/0`. |
 | `AI_ALLOWED_ORIGINS` | Liste facultative d'origines IA HTTPS exactes, séparées par des virgules, sans chemin ni secret ; vide par défaut et recommandé si l'IA n'est pas utilisée. |
 | `AI_ALLOW_LOCAL_OLLAMA` | `false` par défaut ; `true` autorisé uniquement pour Ollama HTTP sur une machine de développement isolée, jamais en production. |
 | `FIRST_SUPERUSER_EMAIL` | Email utilisé uniquement pour créer le tout premier administrateur. |
@@ -33,6 +37,65 @@ print(secrets.token_urlsafe(48))"` génère une valeur adaptée pour `SECRET_KEY
 Conservez-la dans un gestionnaire de secrets ou dans un fichier `.env` ignoré
 par Git, pas dans ce dépôt. Pour `POSTGRES_PASSWORD` utilisé par Docker Compose,
 une valeur URL-safe évite les caractères spéciaux dans l'URL construite.
+
+## Connexions : limite IP et frontière de confiance
+
+Les deux routes de connexion ont une limite Redis partagée de **30 requêtes
+par IP et 15 minutes** avant l'analyse du corps, en plus de la limite existante
+par identifiant. Les corps invalides et les connexions réussies comptent aussi.
+La 31e requête reçoit `429` et `Retry-After` ; une IP partagée par plusieurs
+personnes peut donc bloquer temporairement tous ses utilisateurs. Une protection
+locale par processus borne une partie des appels Redis, mais ne remplace ni une
+protection réseau ni un suivi du quota. Voir les détails et limites dans
+[redis.md](redis.md).
+
+La configuration de production doit correspondre au **véritable trajet** :
+
+- `direct` ignore tous les en-têtes et utilise le pair TCP public reçu par
+  Uvicorn. Les pairs non publics sont refusés en production. Une adresse
+  publique n'est pas la preuve qu'il s'agit du navigateur plutôt que d'un proxy :
+  ne choisir ce mode que si l'accès direct au serveur est établi et sécurisé.
+- `trusted_proxy` n'accepte que les pairs TCP correspondant aux IP/CIDR indiqués
+  explicitement, puis lit exactement un en-tête `CLIENT_IP_PROXY_HEADER` :
+  `cf-connecting-ip` ou `x-real-ip`. Ce proxy doit **supprimer ou écraser les
+  valeurs envoyées par le client**, fournir une IP publique unique et empêcher
+  qu'une autre origine accède au backend en se faisant passer pour lui. En
+  production, un pair non approuvé ou une adresse manquante, double, invalide
+  ou non publique entraîne `503`. Les IP IPv4-mappées sont normalisées ;
+  `X-Forwarded-For` est ignoré.
+- Dans tous les cas, démarrer Uvicorn avec **`--no-proxy-headers`** : son
+  middleware de proxy ne doit pas réécrire le pair TCP avant le contrôle. Le
+  Dockerfile et les deux Compose le précisent déjà ; toute commande de démarrage
+  personnalisée doit le conserver. Le contrôle du port zéro détecte certaines
+  réécritures d'Uvicorn 0.30.6, mais il ne détecte pas tous les intermédiaires et
+  ne remplace pas ce paramètre.
+- En mode proxy de production, l'API considère que le trafic provenant du
+  proxy approuvé est arrivé en **HTTPS** et rétablit ce schéma pour les
+  redirections, sans croire `X-Forwarded-Proto`. L'opérateur doit impérativement
+  imposer HTTPS à l'entrée publique ; l'application ne peut pas le prouver et
+  ne doit pas servir de requêtes HTTP publiques sur ce trajet.
+
+**Render n'est pas validé par ces tests.** L'edge public de Render documente
+l'écrasement de `CF-Connecting-IP`, mais cela ne prouve ni le pair réellement
+vu par le processus, ni l'isolation de tous les chemins possibles. Ne pas
+inventer de CIDR ni utiliser `0.0.0.0/0`, `::/0` ou une confiance universelle.
+Vérifier auprès de l'hébergeur le pair TCP, les réseaux exacts, l'écrasement de
+l'en-tête et l'absence de chemin de contournement **avant tout déploiement** ;
+sans preuve, l'exposition reste bloquée. Désactiver une URL alternative, quand
+l'hébergeur le permet, ne suffit pas à prouver l'isolation de l'origine.
+
+Le Nginx frontend fourni écrase `X-Real-IP` avec son propre `$remote_addr` et
+supprime `CF-Connecting-IP` pour `/api/`. S'il est lui-même derrière un autre
+proxy, `$remote_addr` désigne cet intermédiaire, pas nécessairement l'utilisateur :
+ne pas considérer cette chaîne comme validée sans configuration et revue
+supplémentaires. Les autres proxys et commandes de lancement ne sont pas
+couverts automatiquement par ce fichier Nginx.
+
+Pour limiter l'énumération, les réponses d'authentification ne publient plus
+`X-Process-Time` et une vérification bcrypt factice est exécutée pour un compte
+inexistant ou inactif. C'est une atténuation, **pas une garantie de temps
+constant** : les différences de base de données, de hash, de réseau ou de
+charge peuvent rester mesurables.
 
 ## Premier administrateur et migrations
 
@@ -232,9 +295,10 @@ avant traitement des autres limitations de sécurité et de sauvegarde.
 
 - Prévoir et tester une défense de sortie réseau indépendante du code pour
   les adresses internes, les métadonnées et les routes particulières.
-- La limitation Redis couvre les deux routes de connexion et les changements
-  de mot de passe par identifiant, pas par IP. Elle peut être utilisée pour bloquer temporairement un compte et
-  ne protège pas seule contre une attaque distribuée ou l'épuisement des quotas.
-  Voir [redis.md](redis.md).
+- La limitation Redis couvre les connexions par IP et identifiant et les
+  changements de mot de passe par identifiant. Elle peut bloquer une IP partagée
+  ou un compte connu et ne protège pas seule contre une attaque distribuée,
+  l'épuisement des quotas ou une frontière de proxy mal configurée. La chaîne
+  effective de l'hébergeur reste à vérifier. Voir [redis.md](redis.md).
 - Les tests actuels ne constituent pas un audit complet des permissions,
   dépendances, sauvegardes, restauration, ni de l'isolation entre entreprises.

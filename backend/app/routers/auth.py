@@ -25,6 +25,10 @@ from ..services.redis_store import LoginRateLimited, RedisStore, get_redis_store
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+# Public, non-credential bcrypt hash, generated with the same work factor as
+# newly created accounts. Never use its verification result for authentication.
+_DUMMY_LOGIN_HASH = "$2b$12$VB2wA4RZVVH2quey0wxfguwmhnw1JFpwdRos4/wxqVB/WEgJGFrLO"
+
 DEFAULT_STAGES = [
     {"name": "Nouveau prospect", "color": "#64748b", "order": 1},
     {"name": "Premier contact", "color": "#0ea5e9", "order": 2},
@@ -106,13 +110,17 @@ def _login(identifier: str, password: str, db: Session, store: RedisStore | None
     enforce_login_limit(identifier, store)
     user = db.query(User).filter(User.email == identifier).first()
     if not user:
+        # Do comparable bcrypt work even for an unknown identifier. This
+        # reduces, but cannot completely eliminate, account timing differences.
+        verify_password(password, _DUMMY_LOGIN_HASH)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Email ou mot de passe incorrect")
 
     # Capture BOTH the password hash and the epoch before verification. If a
     # password change or logout races with this request, the conditional update
     # fails or the token retains the old epoch and is rejected on its next use.
     user_id, password_hash, previous_nonce = user.id, user.hashed_password, user.session_nonce
-    if not user.is_active or not verify_password(password, password_hash):
+    verified = verify_password(password, password_hash if user.is_active else _DUMMY_LOGIN_HASH)
+    if not user.is_active or not verified:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Email ou mot de passe incorrect")
     if previous_nonce is not None and not is_valid_session_nonce(previous_nonce):
         raise HTTPException(status_code=503, detail="Compte temporairement indisponible")

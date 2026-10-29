@@ -73,6 +73,9 @@ def _make_test_store(url: str, secret: str, prefix: str):
         "SECRET_KEY": secret,
         "ALLOW_PUBLIC_REGISTRATION": "false",
         "CORS_ORIGINS": "",
+        "CLIENT_IP_MODE": "",
+        "CLIENT_IP_PROXY_HEADER": "",
+        "CLIENT_IP_TRUSTED_PROXIES": "",
     })
     previous_directory = os.getcwd()
     with tempfile.TemporaryDirectory(prefix="primecrm-redis-check-") as directory:

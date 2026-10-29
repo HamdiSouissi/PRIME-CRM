@@ -15,6 +15,18 @@ comptes nouvellement créés doivent respecter les mêmes limites de mot de pass
 que le premier administrateur : 16 caractères minimum, 72 octets UTF-8 maximum,
 sans espaces au début ou à la fin.
 
+## Connexion et limites
+
+Les requêtes `POST /api/v1/auth/login` (formulaire) et
+`POST /api/v1/auth/login-json` partagent une limite par IP et une limite par
+identifiant. Les corps invalides consomment aussi la limite IP. `429` indique
+une limite atteinte et fournit `Retry-After` en secondes ; `503` signale une
+protection ou une identification IP indisponible. Les réponses
+d'authentification ne sont pas mises en cache. Ces limites dépendent d'une
+configuration de proxy vérifiée et de Redis en production ; elles peuvent
+bloquer temporairement des utilisateurs derrière une même IP. Voir
+[redis.md](redis.md) et [security.md](security.md).
+
 ## Mot de passe et sessions
 
 Toutes les routes ci-dessous exigent un jeton Bearer valide ; les chemins sont
@@ -35,5 +47,5 @@ préfixés par `/api/v1`.
   un rôle insuffisant et `404` masque les comptes d'une autre entreprise.
 
 Ne pas transmettre les mots de passe et jetons dans une URL ou des journaux.
-La protection par IP et la revue des journaux doivent encore être finalisées
-avant exposition publique. Voir [security.md](security.md).
+La configuration IP effective de l'hébergeur et la revue des journaux doivent
+encore être vérifiées avant exposition publique. Voir [security.md](security.md).

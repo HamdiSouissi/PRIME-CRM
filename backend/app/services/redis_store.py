@@ -19,11 +19,14 @@ from redis.exceptions import RedisError
 from redis.retry import Retry
 
 from ..config import settings
+from ..core.client_ip import canonical_client_ip
 
 
 CACHE_SECONDS = 30
 LOGIN_ATTEMPTS = 10
 LOGIN_WINDOW_SECONDS = 15 * 60
+IP_LOGIN_ATTEMPTS = 30
+IP_LOGIN_WINDOW_SECONDS = 15 * 60
 PASSWORD_CHANGE_ATTEMPTS = 5
 PASSWORD_CHANGE_WINDOW_SECONDS = 15 * 60
 
@@ -100,6 +103,11 @@ class RedisStore:
         normalized = unicodedata.normalize("NFKC", identifier).strip().casefold()
         return f"{self.prefix}:password-change:{self._digest('password-change', normalized)}"
 
+    def _login_ip_key(self, client_ip: str) -> str:
+        # A different purpose prevents correlating these keys with login emails.
+        canonical = canonical_client_ip(client_ip)
+        return f"{self.prefix}:login-ip:{self._digest('login-ip', canonical)}"
+
     def check_writable(self) -> None:
         # Also checks authentication and write quota, not just an unbilled PING.
         key = f"{self.prefix}:probe:{secrets.token_hex(16)}"
@@ -122,6 +130,9 @@ class RedisStore:
 
     def record_login(self, identifier: str) -> None:
         self._record_limited_attempt(self._login_key(identifier), LOGIN_WINDOW_SECONDS, LOGIN_ATTEMPTS)
+
+    def record_login_ip(self, client_ip: str) -> None:
+        self._record_limited_attempt(self._login_ip_key(client_ip), IP_LOGIN_WINDOW_SECONDS, IP_LOGIN_ATTEMPTS)
 
     def record_password_change(self, identifier: str) -> None:
         self._record_limited_attempt(

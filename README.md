@@ -3,7 +3,7 @@
 **Prime CRM** est une application éditée par **Prime Vision Solutions** (Tunis, Tunisie) pour centraliser clients, pipeline commercial, devis, agenda et intelligence artificielle facultative.
 
 > [!WARNING]
-> Le projet n'est pas encore prêt pour une exposition publique. L'accès privé, Redis, le changement de mot de passe et la révocation des sessions sont intégrés techniquement ; leur raccordement au déploiement reste à valider. Il reste notamment à protéger les connexions par IP, revoir les destinations réseau IA, prévoir la récupération d'un compte et vérifier les dépendances et les sauvegardes. Une CI verte ne constitue pas une validation de sécurité.
+> Le projet n'est pas encore prêt pour une exposition publique. L'accès privé, Redis, la limitation des connexions par IP, le changement de mot de passe et la révocation des sessions sont intégrés techniquement ; leur raccordement et la frontière de confiance du proxy restent à valider. Il reste notamment à prévoir une défense réseau IA, la récupération d'un compte et à vérifier les dépendances et les sauvegardes. Une CI verte ne constitue pas une validation de sécurité.
 
 ![Prime CRM](https://img.shields.io/badge/Stack-React%20%2B%20FastAPI%20%2B%20PostgreSQL-0ea5e9)
 ![License](https://img.shields.io/badge/License-MIT-green)
@@ -56,7 +56,7 @@
 
 ### Sécurité & Confidentialité
 - Auth JWT + bcrypt, rôles (admin/manager/commercial/viewer) vérifiés serveur, séparation données par entreprise ; changement de mot de passe et révocation globale des sessions côté serveur.
-- Limitation Redis par identifiant pour les connexions et les changements de mot de passe ; la protection par IP et les autres mesures de sécurité restent à traiter avant exposition publique.
+- Limitation Redis des connexions par IP et identifiant et des changements de mot de passe par identifiant ; la configuration réelle du proxy et d'autres mesures de sécurité restent à valider avant exposition publique.
 - Uploads limités à 10 Mo ; les nouvelles clés API IA sont chiffrées avant stockage. Les anciennes clés en clair doivent être remplacées ; la défense réseau IA, HTTPS, CORS et les sauvegardes restent à valider avant production.
 
 ### Administration
@@ -171,7 +171,7 @@ cp ../.env.example .env  # fichier ignoré par Git ; renseigner les secrets loca
 # en développement pour désactiver le cache et la limitation des connexions.
 alembic upgrade head
 python -m app.bootstrap
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --no-proxy-headers
 
 # Dans un autre terminal, depuis la racine du dépôt :
 cd frontend
@@ -227,7 +227,7 @@ garantie et une défense de sortie réseau reste nécessaire ; voir
 - Les ports du Compose de développement sont liés à `127.0.0.1` par défaut.
 - **Réseau interne** : `prime-net` (bridge)
 - **Migrations** : `alembic upgrade head` avant `python -m app.bootstrap` et le serveur ; aucune création de schéma de secours si la migration échoue.
-- **Redis** : requis en production, utilisé pour le cache des étapes et la limitation par identifiant ; voir `docs/redis.md`.
+- **Redis** : requis en production pour le cache des étapes et la limitation des connexions par IP et identifiant ; voir `docs/redis.md`.
 - **.env** : voir `.env.example` sans secrets
 
 ### Commandes usuelles
@@ -244,9 +244,9 @@ docker compose restart backend    # redémarrer backend seul
 
 ### Production `docker-compose.prod.yml`
 
-- Variables `POSTGRES_*`, `SECRET_KEY` et `REDIS_URL` obligatoires ; `FIRST_SUPERUSER_*` est requis uniquement lors de la première initialisation d'une base vide. `REDIS_URL` doit utiliser TLS et une authentification. Ne pas déployer avant les correctifs restants.
-- `restart: always`, `workers: 2` pour Gunicorn/Uvicorn, pas de `reload`
-- HTTPS via un hébergeur ou un reverse proxy externe : configuration à définir et vérifier avant déploiement.
+- Variables `POSTGRES_*`, `SECRET_KEY`, `REDIS_URL` et `CLIENT_IP_MODE` obligatoires ; `FIRST_SUPERUSER_*` est requis uniquement lors de la première initialisation d'une base vide. `REDIS_URL` doit utiliser TLS et une authentification. Ne pas déployer avant les correctifs restants.
+- `restart: always`, deux workers Uvicorn avec `--no-proxy-headers`, pas de `reload`.
+- HTTPS obligatoire et frontière de confiance du proxy à définir et vérifier avant déploiement ; les CIDR et le trajet Render ne sont pas encore validés. Voir `docs/security.md` et `docs/deployment.md`.
 
 ### Sauvegarde & restauration : à valider
 
@@ -319,10 +319,11 @@ valeurs résolues ; les secrets ne doivent jamais être partagés.
 ## ✅ Validation avant déploiement
 
 La CI vérifie le code, les migrations et Redis sur des services jetables. Il
-reste à raccorder le Redis hébergé, ajouter une protection par IP et une défense
-de sortie réseau pour l'IA, prévoir la récupération des comptes, vérifier les sauvegardes
-et les dépendances, puis tester le cycle complet sur les services hébergés. Aucune exposition publique ne doit
-être déduite d'une CI verte.
+reste à raccorder le Redis hébergé, valider la frontière de confiance IP du
+proxy et une défense de sortie réseau pour l'IA, prévoir la récupération des
+comptes, vérifier les sauvegardes et les dépendances, puis tester le cycle
+complet sur les services hébergés. Aucune exposition publique ne doit être
+déduite d'une CI verte.
 
 Les changements sont publiés sur la branche de travail de la session. Aucune
 fusion vers `main` ni aucun déploiement n'est automatique à ce stade.

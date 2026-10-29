@@ -19,6 +19,10 @@ os.environ["CORS_ORIGINS"] = "http://localhost:5173"
 # No real provider destinations or local Ollama exceptions from .env/the host.
 os.environ["AI_ALLOWED_ORIGINS"] = ""
 os.environ["AI_ALLOW_LOCAL_OLLAMA"] = "false"
+# Do not inherit a developer's trusted-proxy mode or networks.
+os.environ["CLIENT_IP_MODE"] = ""
+os.environ["CLIENT_IP_PROXY_HEADER"] = ""
+os.environ["CLIENT_IP_TRUSTED_PROXIES"] = ""
 # Override any local .env bootstrap values instead of reading real ones.
 os.environ["FIRST_SUPERUSER_EMAIL"] = "unused@example.com"
 os.environ["FIRST_SUPERUSER_PASSWORD"] = "unused-test-password-4827"

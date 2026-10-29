@@ -54,34 +54,60 @@ sécurité.**
   d'invalidation, les statistiques peuvent rester périmées pendant environ
   30 secondes. PostgreSQL reste la source de vérité. Le cache n'est pas utilisé
   pour les autorisations ou les mutations commerciales.
-- Les compteurs de connexion et de changement de mot de passe sont des nombres ; leurs clés utilisent un HMAC de
-  l'identifiant normalisé, jamais l'email en clair. Ces données sont
-  **pseudonymisées, pas anonymisées** : le fournisseur peut voir leur existence,
-  leur fréquence et leur durée. Une rotation de `SECRET_KEY` invalide les
-  jetons, rend les anciennes entrées de cache illisibles et change les clés des
-  compteurs.
+- Les compteurs de connexion et de changement de mot de passe sont des nombres ;
+  leurs clés utilisent un HMAC de l'identifiant normalisé ou de l'adresse IP
+  canonique, jamais l'email ou l'IP en clair. Ces données sont **pseudonymisées,
+  pas anonymisées** : le fournisseur peut voir leur existence, leur fréquence
+  et leur durée. L'hébergeur ou les proxys peuvent journaliser des IP en dehors
+  de Redis. Une rotation de `SECRET_KEY` invalide les jetons, rend les anciennes
+  entrées de cache illisibles et change les clés des compteurs.
 
 ## Limitation des connexions et changements de mot de passe
 
-Les deux routes `/auth/login` et `/auth/login-json` partagent un compteur Redis
-atomique par identifiant normalisé, commun aux processus de l'API. Les dix
-premières tentatives dans une fenêtre de 15 minutes sont autorisées ; à partir
-de la onzième, l'API répond `429` avec `Retry-After`. **Toutes** les tentatives
-comptent, même réussies ; une connexion réussie ne remet pas le compteur à zéro.
+Les routes `/auth/login` et `/auth/login-json` partagent deux compteurs Redis
+atomiques entre tous les processus :
 
-`/auth/change-password` utilise un compteur **séparé** par compte, limité à
-cinq tentatives par 15 minutes ; la sixième reçoit `429` avec `Retry-After`.
-Toutes les tentatives comptent, même réussies. Ce compteur n'épuise pas celui
-utilisé pour se connecter à nouveau. Les identifiants sont pseudonymisés, aucun
-mot de passe n'est envoyé à Redis, et aucun compteur n'est utilisé si Redis est
-absent en mode développement/test seulement.
+1. **IP** : 30 requêtes par 15 minutes avant l'analyse et la validation du
+   corps, quelle que soit la route ; les requêtes invalides et réussies comptent.
+   La 31e reçoit `429` avec `Retry-After`. L'IP est obtenue selon la politique
+   de confiance explicitement configurée ; `X-Forwarded-For` n'est jamais utilisé
+   pour déterminer cette IP. Une configuration proxy invalide renvoie `503`.
+2. **Identifiant normalisé** : 10 tentatives par 15 minutes après validation ;
+   la 11e reçoit `429` avec `Retry-After`. Réussir une connexion ne remet pas le
+   compteur à zéro. Cette limite est indépendante du compteur par IP.
 
-Cette protection n'est pas une protection complète contre les attaques : un
-attaquant peut épuiser le quota Redis, cibler de nombreux identifiants, ou
-bloquer temporairement un compte connu. Aucune adresse IP ni en-tête
-`X-Forwarded-For` n'est utilisé pour cette limitation : la confiance dans les
-proxys et une protection par IP restent à définir avant exposition. Une fenêtre
-fixe autorise aussi des rafales aux frontières de deux fenêtres.
+`/auth/change-password` a un compteur **séparé** par compte, limité à cinq
+changements demandés par 15 minutes ; la sixième tentative reçoit `429`. Toutes
+les tentatives comptent, même réussies. Ce compteur n'épuise pas celui utilisé
+pour se reconnecter. Aucun mot de passe n'est envoyé à Redis. Sans `REDIS_URL`
+en développement/test, le cache et **toutes ces limites**, y compris le
+préfiltre local, sont désactivés ; ne pas exposer cette configuration.
+
+Avant Redis, chaque processus autorise au maximum **60 requêtes par 60
+secondes au total** à atteindre le compteur IP, quelle que soit l'IP. Les refus
+IP Redis sont gardés dans un cache négatif local, limité à 4 096 IP
+pseudonymisées, jusqu'à l'expiration du compteur ; tant qu'ils y restent, ils
+ne sollicitent plus Redis et n'épuisent pas ce budget pour les autres clients.
+Les requêtes bloquées par le préfiltre ne consomment pas de compteur Redis et
+reçoivent `429` avec `Retry-After`. `/health` et les prévols `OPTIONS`
+ne sont pas limités par ce mécanisme. Ce budget et ce cache sont **par
+processus**, réinitialisés au redémarrage et non coordonnés entre instances :
+un attaquant peut toujours épuiser le budget ou le quota ; des utilisateurs
+légitimes peuvent être ralentis même depuis des IP différentes.
+
+Le script atomique coûte `EVAL` + `INCR` + `TTL`, soit **trois commandes
+Upstash**, et une commande `EXPIRE` supplémentaire lors de la première
+création. Une tentative valide mobilise les compteurs IP et identifiant, soit
+habituellement six commandes au total, jusqu'à huit si les deux clés sont
+créées ; une requête de connexion invalide mobilise seulement le compteur IP,
+soit trois ou quatre. Ces chiffres n'incluent pas les autres usages Redis ;
+il faut mesurer le quota réellement consommé. Les fenêtres sont fixes et peuvent
+laisser passer des rafales à leur frontière.
+
+Cette protection n'est pas une défense DDoS : une IP partagée ou un compte connu
+peuvent être bloqués temporairement, et de nombreuses IP ou instances peuvent
+épuiser le quota. La confiance dans le trajet proxy reste à établir avant
+exposition ; voir [security.md](security.md).
 
 ## Offre gratuite envisagée
 
