@@ -1,10 +1,9 @@
 """Prepare one approved Netlify frontend release, with bounded verification.
 
-This module is not wired to the workflow yet. Its tests use fictitious data;
-creating a deploy must only happen after CI, a protected human approval, a
-branch-head check, and a separate decision to publish. A POST may already have
-created or published a deploy even if a response is missing: never retry it
-without inspecting Netlify first.
+Its tests use fictitious data. Creating a deploy must only happen after CI, a
+protected human approval, backend compatibility and migration checks, and a
+separate decision to publish. A POST may already have created or published a
+deploy even if a response is missing: never retry without inspecting Netlify.
 """
 
 from __future__ import annotations
@@ -43,7 +42,9 @@ from tools.netlify_preflight import (
 
 _REPOSITORY = "HamdiSouissi/PRIME-CRM"
 _REF = "refs/heads/arena/a18b007f-prime-crm"
+_GITHUB_BRANCH_URL = "https://api.github.com/repos/HamdiSouissi/PRIME-CRM/git/ref/heads/arena/a18b007f-prime-crm"
 _COMMIT = re.compile(r"[0-9a-f]{40}\Z", re.ASCII)
+_GITHUB_TOKEN = re.compile(r"[A-Za-z0-9_.-]{8,1024}\Z", re.ASCII)
 _DEPLOY_ID = re.compile(r"[A-Za-z0-9_-]{1,128}\Z", re.ASCII)
 _MAX_ARCHIVE_BYTES = _MAX_TOTAL_BYTES + 1_048_576
 _MAX_JSON_BYTES = 1_048_576
@@ -193,6 +194,43 @@ def _read_json_response(response) -> dict:
     return value
 
 
+def validate_github_token(token: str) -> None:
+    """Reject absent or unsafe GitHub bearer tokens without echoing them."""
+    if not _GITHUB_TOKEN.fullmatch(token):
+        raise ReleaseNotSent("The read-only GitHub token is missing or invalid")
+
+
+def verify_branch_head(token: str, commit: str, opener) -> None:
+    """Check the fixed branch immediately before the Netlify POST.
+
+    This limits stale releases but cannot eliminate a concurrent push occurring
+    after the check. The GitHub token is never included in a Netlify request.
+    """
+    validate_github_token(token)
+    if not _COMMIT.fullmatch(commit):
+        raise ReleaseNotSent("The tested commit SHA is invalid")
+    request = Request(
+        _GITHUB_BRANCH_URL,
+        method="GET",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "prime-crm-github-release",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    try:
+        with opener.open(request, timeout=_GET_TIMEOUT_SECONDS) as response:
+            if response.getcode() != 200:
+                raise ValueError("unexpected GitHub response")
+            ref = _read_json_response(response)
+        obj = ref.get("object")
+        if ref.get("ref") != _REF or not isinstance(obj, dict) or obj.get("type") != "commit" or obj.get("sha") != commit:
+            raise ValueError("branch changed")
+    except Exception:  # noqa: BLE001 - prevent remote details and tokens entering logs
+        raise ReleaseNotSent("The approved commit is not the current branch head") from None
+
+
 def send_upload(request: Request, opener) -> str:
     """Send exactly one POST. Do not retry, including on errors or timeouts."""
     try:
@@ -260,13 +298,15 @@ def wait_for_publication(token: str, deploy_id: str, opener, *, clock=time.monot
         sleep(_POLL_SECONDS)
 
 
-def release(token: str, commit: str, archive: Path, opener, *, clock=time.monotonic, sleep=time.sleep) -> None:
+def release(token: str, commit: str, archive: Path, opener, *, github_token: str, clock=time.monotonic, sleep=time.sleep) -> None:
     """Check locally and remotely before one POST; never retry the POST."""
+    validate_github_token(github_token)
     payload = read_validated_archive(archive, commit)
     request = build_upload_request(token, commit, payload)
     try:
         validate_release_site(get_site(token, opener))
         check_private_login(opener)
+        verify_branch_head(github_token, commit, opener)
     except ReleaseNotSent:
         raise
     except Exception:  # noqa: BLE001 - keep remote errors and secrets out of logs
@@ -293,17 +333,31 @@ def main() -> int:
     try:
         commit = validate_context(os.environ)
         token = os.environ.get("NETLIFY_AUTH_TOKEN", "")
+        github_token = os.environ.get("GH_READ_TOKEN", "")
+        validate_github_token(github_token)
         # Validate the local file before constructing an opener or contacting Netlify.
         read_validated_archive(args.archive, commit)
         opener = make_opener()
-        release(token, commit, args.archive, opener)
+        release(token, commit, args.archive, opener, github_token=github_token)
     except ReleasePublishedPrivacyUnknown:
         print("::error::The deploy is published but its privacy probe failed. Check Netlify immediately; do not retry automatically.", file=sys.stderr)
         return 1
     except ReleaseOutcomeUnknown:
         print("::error::A deploy may already exist. Check Netlify before retrying; no automatic retry was made.", file=sys.stderr)
         return 1
-    except (ReleaseNotSent, PreflightError):
+    except ReleaseNotSent as error:
+        # Whitelist fixed explanations rather than echoing arbitrary exceptions.
+        hints = {
+            "An unlocked production deployment was not confirmed": "Netlify publishing flags are missing or not explicitly unlocked",
+            "The Netlify project checks did not pass": "Netlify project, stopped-builds or publishing checks did not pass",
+            "The Netlify read-only preflight did not pass": "Netlify project lookup or anonymous privacy probe did not pass",
+            "The approved commit is not the current branch head": "The approved GitHub branch head could not be confirmed",
+            "The read-only GitHub token is missing or invalid": "The GitHub read token is missing or invalid",
+        }
+        hint = hints.get(str(error), "Release validation failed")
+        print(f"::error::{hint}; no Netlify deployment was requested.", file=sys.stderr)
+        return 1
+    except PreflightError:
         print("::error::Release validation failed; no Netlify deployment was requested.", file=sys.stderr)
         return 1
     except Exception:  # noqa: BLE001 - keep remote errors and secrets out of logs

@@ -8,8 +8,8 @@ aucune URL Neon et aucune clé Redis hébergée. Les identifiants PostgreSQL
 visibles dans le workflow ne servent qu'au conteneur jetable du job.
 
 Pour un `push` du dépôt `HamdiSouissi/PRIME-CRM` sur la branche
-`arena/a18b007f-prime-crm`, un troisième job peut **demander un déploiement
-Render** après la réussite des deux jobs et l'approbation de l'environnement
+`arena/a18b007f-prime-crm`, un job peut **demander un déploiement Render**
+après la réussite des deux jobs et l'approbation de l'environnement
 GitHub `production`. Il compare l'empreinte Alembic à la variable
 `PRODUCTION_ALEMBIC_FINGERPRINT`, valide le format du secret
 `RENDER_DEPLOY_HOOK_URL`, vérifie que le commit est toujours en tête de branche,
@@ -109,8 +109,8 @@ l'intégrité des autres fichiers.
 Ce job n'utilise aucun jeton Netlify, n'envoie aucune requête à Netlify et ne
 crée aucun artefact GitHub. L'archive reste sur le runner temporaire. Pour
 répéter ce test sans demander de déploiement backend, inclure aussi
-`[skip render]` dans le message du dernier commit. Il ne s'agit pas d'une
-publication frontend : le workflow ne déploie pas encore le frontend.
+`[skip render]` dans le message du dernier commit. Cette répétition ne doit pas
+être confondue avec le job distinct de publication réelle décrit ci-dessous.
 
 ### Vérification Netlify en lecture seule
 
@@ -140,22 +140,100 @@ les détails d'erreur, désactive les proxys hérités et refuse les redirection
 l'API ; il ne prouve pas que le site fonctionnera après un futur déploiement.
 Inclure aussi `[skip render]` pour éviter toute demande Render lors de ce test.
 
-Le module `tools/netlify_release.py` prépare la future demande de publication,
-mais **aucun job ne l'appelle encore**. Ses tests utilisent exclusivement des
-réponses fictives. Il revalide le ZIP et son SHA déclaré, exige le projet et
-les builds attendus ainsi qu'un déploiement explicitement déverrouillé, puis
-prévoit au plus un POST ZIP. Une réponse `ready` ne suffit pas : le déploiement
-doit aussi être l'ID publié du site. Après un POST, toute erreur ou expiration
-de délai exige une vérification sur Netlify avant de réessayer. Une sonde
-privée après publication n'est qu'une observation ponctuelle. Ce module ne doit
-pas être lancé manuellement ; son éventuel job devra d'abord vérifier CI, HEAD,
-compatibilité backend, migrations et approbation humaine.
+### Publication frontend réelle, après approbation
+
+**Attention : approuver ce job peut réellement modifier la production Netlify et
+consommer des crédits.** Il ne s'agit plus de la répétition ci-dessus. Un push
+sur la branche de travail doit contenir **les deux** marqueurs dans le message
+du dernier commit : `[frontend release] [skip render]`. Le job
+`Netlify · publication après approbation` attend les deux tests CI puis un
+reviewer de `production-frontend`. Le marqueur `[frontend release]` empêche
+également toute demande Render, même si `[skip render]` a été oublié ; dans ce
+cas le frontend ne se publie pas non plus.
+
+Avant d'approuver, confirmer sur GitHub, dans **Settings > Environments >
+production-frontend**, que la branche autorisée et les reviewers sont corrects,
+que le contournement administrateur est désactivé, et que l'environnement
+contient :
+
+- le secret `NETLIFY_AUTH_TOKEN`, sans jamais afficher ou partager sa valeur ;
+- la variable `PRODUCTION_ALEMBIC_FINGERPRINT` déjà établie après migration ;
+- la variable `PRODUCTION_BACKEND_COMMIT`, qui doit être le SHA complet du
+  dernier backend **réellement vérifié Live sur Render**. Pour le backend Live
+  confirmé au 29 octobre 2026 :
+  `13bf7ed13f653aeca8e9b977a49505ee2873583d`. La variable est publique et
+  ne contient aucun secret. Après chaque futur déploiement backend, ne la
+  modifier qu'après confirmation de l'état Live et du SHA exact sur Render.
+
+La variable de dépôt publique `VITE_API_URL` doit toujours valoir
+`https://prime-crm-cqi3.onrender.com`. Vérifier également le plan et le solde
+Netlify, la visibilité privée et l'absence de verrouillage de publication. Une
+valeur GitHub manquante, un schéma de réponse Netlify inattendu ou un champ
+`prevent_non_git_prod_deploys` / `published_deploy.locked` non explicitement
+`false` bloque la demande avant le POST ; ces champs dépendent de l'API Netlify.
+Ne pas activer les builds Git pour contourner un échec.
+
+Après approbation, le job vérifie le SHA testé, l'empreinte Alembic, puis que
+le SHA backend enregistré est un ancêtre et que les arbres Git `backend` sont
+identiques. Il ne vérifie ni Render ni Neon directement. Il refait build et
+tests Docker **sans le secret Netlify**, valide le ZIP, puis le module
+`tools/netlify_release.py` vérifie le site privé, les champs de verrouillage et
+le HEAD GitHub immédiatement avant **un seul POST** ; aucune relance
+automatique n'est prévue. Le HEAD peut néanmoins changer entre ce contrôle et
+le POST : ne pas pousser d'autre commit pendant l'approbation et le déploiement.
+
+Les tests du module sont fictifs ; la publication réelle doit être validée en
+conditions réelles. Un état `ready` ne suffit pas : le déploiement demandé doit
+être l'ID publié. Après tout échec, timeout ou annulation pendant/après le POST,
+un déploiement peut déjà exister ou être en ligne : vérifier **Deploys** sur
+Netlify et le solde avant toute nouvelle demande, sans utiliser « Re-run » à
+l'aveugle. Si la sonde privée échoue après publication, vérifier immédiatement
+la visibilité Netlify. Même réussie, cette sonde sur `/login` ne prouve pas la
+confidentialité de toutes les routes.
+
+Après succès, vérifier dans Netlify que le déploiement est `Published`, ouvrir
+`/build-info.json` sur le site après authentification et comparer le SHA au
+commit du job, puis tester la connexion CRM et une route normale. Ce fichier
+contient un SHA déclaré, pas une preuve cryptographique des octets servis.
+Ne lancer ni ce module manuellement ni de migration dans ce job.
 
 Sur Netlify Free à crédits, une publication de production réussie consomme
 actuellement 15 crédits ; trafic et bande passante en consomment aussi. Les
 300 crédits mensuels sont partagés par l'équipe et, une fois épuisés, les sites
 sont suspendus jusqu'au prochain cycle. Vérifier le plan et le solde avant
 chaque publication ; ne pas activer de formule payante.
+
+Pour une **future** demande frontend, après avoir vérifié tous ces points, un
+commit vide peut servir de déclencheur sans modifier de fichiers. Exemple sous
+Windows PowerShell dans la copie locale connue ; il s'arrête si elle est sale,
+sur une autre branche ou si elle ne peut pas avancer sans divergence :
+
+```powershell
+Set-Location "D:\Prime vision solution\projects\PRIME-CRM"
+$branche = 'arena/a18b007f-prime-crm'
+$courante = git branch --show-current
+if ($LASTEXITCODE -ne 0 -or $courante -ne $branche) { throw 'Vérifier la branche locale.' }
+$modifications = git status --porcelain
+if ($LASTEXITCODE -ne 0 -or $modifications) { throw 'Copie locale non propre : arrêter et examiner git status.' }
+git fetch origin $branche
+if ($LASTEXITCODE -ne 0) { throw 'Fetch échoué.' }
+git pull --ff-only origin $branche
+if ($LASTEXITCODE -ne 0) { throw 'Synchronisation impossible sans divergence : arrêter.' }
+$local = git rev-parse HEAD
+if ($LASTEXITCODE -ne 0) { throw 'Lecture du commit local échouée.' }
+$distant = git rev-parse "refs/remotes/origin/$branche"
+if ($LASTEXITCODE -ne 0 -or $local -ne $distant) { throw 'La copie contient des commits locaux non publiés : arrêter.' }
+git commit --allow-empty -m 'Demande frontend [frontend release] [skip render]'
+if ($LASTEXITCODE -ne 0) { throw 'Commit échoué.' }
+git push origin $branche
+if ($LASTEXITCODE -ne 0) { throw 'Push échoué : ne pas approuver un ancien run.' }
+```
+
+Ces commandes n'ont pas été exécutées sur le PC de l'utilisateur. Après le
+push, sélectionner le run CI du **nouveau commit**, attendre les deux tests
+verts, puis examiner et approuver le seul job frontend voulu. N'exécuter la
+commande qu'une fois ; un nouveau commit ou une approbation supplémentaire peut
+mener à une nouvelle publication facturée en crédits.
 
 Pour diagnostiquer une réponse privée inattendue depuis le runner GitHub, un
 commit `[netlify diagnose] [skip render]` lance un job distinct **sans secret** :

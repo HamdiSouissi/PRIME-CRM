@@ -5,8 +5,9 @@ personnelle, une première connexion frontend/backend a été confirmée ; elle 
 constitue pas un audit complet de sécurité ni un test de restauration. Vérifier
 les réglages et les quotas directement chez les hébergeurs avant chaque mise en
 production. Le workflow GitHub contient une demande de déploiement backend
-soumise à approbation ; vérifier son résultat réel dans Render. Le frontend
-n'est pas encore publié par ce workflow.
+soumise à approbation ; vérifier son résultat réel dans Render. Une publication
+frontend distincte est prévue après des marqueurs explicites et approbation ;
+son résultat réel doit être vérifié sur Netlify.
 
 ## Sécurité de l'instance
 
@@ -25,6 +26,13 @@ n'est pas encore publié par ce workflow.
 - Sur Render Free, le stockage local est éphémère : ne pas compter sur les
   fichiers uploadés pour une conservation durable. La veille et les quotas
   gratuits peuvent également affecter la disponibilité.
+- **Budget 0 € :** un service Render Free ne garantit pas à lui seul une
+  facture nulle. Avec un moyen de paiement, un dépassement des minutes de build
+  ou de bande passante du workspace Hobby peut être facturé. Vérifier Billing,
+  les limites et le moyen de paiement ; la limite de dépense de pipeline ne
+  couvre pas la bande passante. Sans moyen de paiement, Render indique
+  suspendre les services ou builds concernés au lieu de facturer. Vérifier les
+  conséquences avant toute modification du compte et surveiller les quotas.
 
 Le serveur web choisit un quota par IP (`LOGIN_LIMIT_SCOPE=ip`, défaut) ou un
 quota partagé (`LOGIN_LIMIT_SCOPE=global`). Le mode IP de production exige
@@ -107,11 +115,12 @@ répétition frontend utilise une référence du même nom dans l'environnement
 après une migration expressément autorisée et réellement vérifiée ; ne pas les
 modifier pour contourner un échec. La répétition ne publie rien sur Netlify.
 Une vérification protégée séparée peut lire le projet Netlify et sonder sa
-protection privée ; elle ne publie pas et ne modifie aucune configuration. Voir
-[ci.md](ci.md). Un module de publication est testé hors réseau, mais il n'est
-pas encore connecté au workflow : aucun job GitHub de publication frontend
-n'est actif à cette étape. Avant une future publication, contrôler le plan Free,
-le solde de crédits Netlify et la visibilité privée de production.
+protection privée sans publier. Le job réel `Netlify · publication après
+approbation` utilise également cette empreinte et compare les arbres backend à
+une référence GitHub mise à jour seulement après vérification de Render Live.
+Le module a été testé hors réseau ; chaque publication doit aussi être vérifiée
+en conditions réelles. Avant chaque publication, contrôler le plan Free, le solde
+de crédits et la visibilité privée de production. Voir [ci.md](ci.md).
 
 ## Demande de déploiement backend
 

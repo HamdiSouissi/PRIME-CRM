@@ -23,6 +23,7 @@ from tools.netlify_preflight import (
     SITE_NAME,
 )
 from tools.netlify_release import (
+    _GITHUB_BRANCH_URL,
     ReleaseNotSent,
     ReleaseOutcomeUnknown,
     ReleasePublishedPrivacyUnknown,
@@ -34,10 +35,12 @@ from tools.netlify_release import (
     send_upload,
     validate_context,
     validate_release_site,
+    verify_branch_head,
     wait_for_publication,
 )
 
 TOKEN = "fake-netlify-token-never-print"
+GITHUB_TOKEN = "fake-ghs-token-never-print"
 COMMIT = "0123456789abcdef" * 2 + "01234567"
 DEPLOY_ID = "deploy_123456789"
 GATE = "https://app.netlify.com/edge-access?" + urlencode(
@@ -60,6 +63,7 @@ CONTEXT = {
     "NETLIFY_RELEASE_APPROVED": "true",
     "GITHUB_SHA": COMMIT,
     "NETLIFY_AUTH_TOKEN": TOKEN,
+    "GH_READ_TOKEN": GITHUB_TOKEN,
 }
 SITE = {
     "id": SITE_ID,
@@ -91,6 +95,10 @@ def deploy(state: str = "ready", **overrides) -> dict:
 
 def published() -> dict:
     return {**SITE, "published_deploy": {"id": DEPLOY_ID, "locked": False}}
+
+
+def branch_head(commit: str = COMMIT) -> dict:
+    return {"ref": CONTEXT["GITHUB_REF"], "object": {"type": "commit", "sha": commit}}
 
 
 class NetlifyReleaseTests(unittest.TestCase):
@@ -180,31 +188,68 @@ class NetlifyReleaseTests(unittest.TestCase):
     def test_success_sends_one_post_then_checks_ready_and_published(self) -> None:
         opener, sleeper = Mock(), Mock()
         opener.open.side_effect = [
-            response(SITE), private_gate(), response(deploy("processing")),
+            response(SITE), private_gate(), response(branch_head()), response(deploy("processing")),
             response(deploy("processing")), response(deploy("ready")), response(published()), private_gate(),
         ]
-        release(TOKEN, COMMIT, self.archive, opener, clock=lambda: 0, sleep=sleeper)
+        release(TOKEN, COMMIT, self.archive, opener, github_token=GITHUB_TOKEN, clock=lambda: 0, sleep=sleeper)
         requests = [call.args[0] for call in opener.open.call_args_list]
-        self.assertEqual([item.get_method() for item in requests], ["GET", "GET", "POST", "GET", "GET", "GET", "GET"])
+        self.assertEqual([item.get_method() for item in requests], ["GET", "GET", "GET", "POST", "GET", "GET", "GET", "GET"])
         self.assertEqual(sum(item.get_method() == "POST" for item in requests), 1)
-        self.assertEqual(requests[2].data, self.archive.read_bytes())
+        self.assertEqual(requests[3].data, self.archive.read_bytes())
+        self.assertEqual(requests[2].full_url, _GITHUB_BRANCH_URL)
+        self.assertEqual(requests[2].get_header("Authorization"), f"Bearer {GITHUB_TOKEN}")
         for request in requests:
             self.assertNotIn(TOKEN, request.full_url)
+            self.assertNotIn(GITHUB_TOKEN, request.full_url)
             if request.full_url == PUBLIC_LOGIN_URL:
                 self.assertIsNone(request.get_header("Authorization"))
+            elif request.full_url.startswith(SITE_API_URL):
+                self.assertEqual(request.get_header("Authorization"), f"Bearer {TOKEN}")
         sleeper.assert_called_once_with(5)
 
     def test_preflight_failure_never_posts(self) -> None:
         opener = Mock()
         opener.open.side_effect = [response(SITE), response(b"public page")]
         with self.assertRaises(ReleaseNotSent):
-            release(TOKEN, COMMIT, self.archive, opener)
+            release(TOKEN, COMMIT, self.archive, opener, github_token=GITHUB_TOKEN)
         self.assertTrue(all(call.args[0].get_method() == "GET" for call in opener.open.call_args_list))
         opener = Mock()
         opener.open.return_value = response({**SITE, "published_deploy": {"id": "old", "locked": True}})
         with self.assertRaises(ReleaseNotSent):
-            release(TOKEN, COMMIT, self.archive, opener)
+            release(TOKEN, COMMIT, self.archive, opener, github_token=GITHUB_TOKEN)
         opener.open.assert_called_once()
+
+    def test_branch_check_requires_expected_commit_and_never_leaks_tokens(self) -> None:
+        cases = (
+            response(branch_head("f" * 40)),
+            response({"ref": "refs/heads/main", "object": {"type": "commit", "sha": COMMIT}}),
+            response({"ref": CONTEXT["GITHUB_REF"], "object": {"type": "tag", "sha": COMMIT}}),
+            response(b"bad json"),
+            URLError(f"{TOKEN} {GITHUB_TOKEN}"),
+            HTTPError(_GITHUB_BRANCH_URL, 302, GITHUB_TOKEN, {"Location": "https://example.invalid"}, None),
+        )
+        for case in cases:
+            opener = Mock()
+            if isinstance(case, Exception):
+                opener.open.side_effect = case
+            else:
+                opener.open.return_value = case
+            with self.subTest(kind=type(case).__name__), self.assertRaises(ReleaseNotSent) as error:
+                verify_branch_head(GITHUB_TOKEN, COMMIT, opener)
+            self.assertNotIn(TOKEN, str(error.exception))
+            self.assertNotIn(GITHUB_TOKEN, str(error.exception))
+            opener.open.assert_called_once()
+        opener = Mock()
+        with self.assertRaises(ReleaseNotSent):
+            verify_branch_head("bad\nvalue", COMMIT, opener)
+        opener.open.assert_not_called()
+
+    def test_branch_changed_after_preflight_never_sends_post(self) -> None:
+        opener = Mock()
+        opener.open.side_effect = [response(SITE), private_gate(), response(branch_head("f" * 40))]
+        with self.assertRaises(ReleaseNotSent):
+            release(TOKEN, COMMIT, self.archive, opener, github_token=GITHUB_TOKEN)
+        self.assertEqual([call.args[0].get_method() for call in opener.open.call_args_list], ["GET", "GET", "GET"])
 
     def test_post_errors_are_uncertain_never_retried_or_leaked(self) -> None:
         request = build_upload_request(TOKEN, COMMIT, read_validated_archive(self.archive, COMMIT))
@@ -246,10 +291,11 @@ class NetlifyReleaseTests(unittest.TestCase):
     def test_privacy_failure_after_publication_is_reported_separately(self) -> None:
         opener = Mock()
         opener.open.side_effect = [
-            response(SITE), private_gate(), response(deploy()), response(deploy()), response(published()), response(b"public"),
+            response(SITE), private_gate(), response(branch_head()), response(deploy()),
+            response(deploy()), response(published()), response(b"public"),
         ]
         with self.assertRaises(ReleasePublishedPrivacyUnknown):
-            release(TOKEN, COMMIT, self.archive, opener, clock=lambda: 0, sleep=Mock())
+            release(TOKEN, COMMIT, self.archive, opener, github_token=GITHUB_TOKEN, clock=lambda: 0, sleep=Mock())
         self.assertEqual(sum(call.args[0].get_method() == "POST" for call in opener.open.call_args_list), 1)
 
     def test_cli_without_protected_context_never_opens_network(self) -> None:
@@ -263,6 +309,28 @@ class NetlifyReleaseTests(unittest.TestCase):
             self.assertEqual(main(), 1)
         opener.assert_not_called()
         self.assertIn("no Netlify deployment was requested", output.getvalue())
+
+    def test_cli_whitelists_preflight_hints_without_echoing_untrusted_errors(self) -> None:
+        cases = (
+            ("An unlocked production deployment was not confirmed", "publishing flags are missing or not explicitly unlocked"),
+            ("The approved commit is not the current branch head", "branch head could not be confirmed"),
+            (f"unsafe {TOKEN} {GITHUB_TOKEN}", "Release validation failed"),
+        )
+        for message, expected in cases:
+            output = io.StringIO()
+            with (
+                self.subTest(message=message),
+                patch.dict(os.environ, CONTEXT, clear=True),
+                patch("sys.argv", ["netlify_release", "--archive", str(self.archive)]),
+                patch("tools.netlify_release.make_opener", return_value=Mock()),
+                patch("tools.netlify_release.release", side_effect=ReleaseNotSent(message)),
+                contextlib.redirect_stderr(output),
+            ):
+                self.assertEqual(main(), 1)
+                self.assertIn(expected, output.getvalue())
+                self.assertIn("no Netlify deployment was requested", output.getvalue())
+                self.assertNotIn(TOKEN, output.getvalue())
+                self.assertNotIn(GITHUB_TOKEN, output.getvalue())
 
     def test_cli_reports_uncertainty_without_printing_sensitive_exception(self) -> None:
         output = io.StringIO()

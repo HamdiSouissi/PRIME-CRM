@@ -72,6 +72,14 @@ jobs:
       - name: Lint Python
         run: python -m ruff check app alembic
 
+      - name: Lint frontend release guards
+        working-directory: .
+        run: |
+          python -m ruff check \
+            tools/backend_release_guard.py tools/tests/test_backend_release_guard.py \
+            tools/netlify_release.py tools/tests/test_netlify_release.py \
+            tools/tests/test_frontend_workflow_guard.py
+
       - name: Test backend (SQLite and disposable Redis)
         env:
           DATABASE_URL: 'sqlite:///:memory:'
@@ -339,6 +347,94 @@ jobs:
           python -m zipfile -t "$RUNNER_TEMP/frontend-release.zip"
           echo 'Rehearsal only: no request to Netlify was made.'
 
+  request_netlify_deploy:
+    name: Netlify · publication après approbation
+    # This is a real production release, not a rehearsal. The two markers
+    # deliberately opt in to frontend release and opt out of Render deployment.
+    if: >-
+      github.event_name == 'push' &&
+      github.repository == 'HamdiSouissi/PRIME-CRM' &&
+      github.ref == 'refs/heads/arena/a18b007f-prime-crm' &&
+      contains(github.event.head_commit.message, '[frontend release]') &&
+      contains(github.event.head_commit.message, '[skip render]')
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    concurrency:
+      group: prime-crm-production-frontend-release
+      cancel-in-progress: false
+    environment:
+      name: production-frontend
+      # A failed check can occur after publication. The job output and Netlify,
+      # not a GitHub deployment badge, determine the result.
+      deployment: false
+    steps:
+      - name: Check out the tested commit and its history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.11'
+
+      - name: Ensure the checkout is the tested commit
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Compare the migration fingerprint with the recorded baseline
+        env:
+          EXPECTED_ALEMBIC_FINGERPRINT: ${{ vars.PRODUCTION_ALEMBIC_FINGERPRINT }}
+        run: |
+          if [ -z "$EXPECTED_ALEMBIC_FINGERPRINT" ]; then
+            echo '::error::PRODUCTION_ALEMBIC_FINGERPRINT is missing from production-frontend.'
+            exit 1
+          fi
+          python tools/migration_fingerprint.py verify --commit "$GITHUB_SHA" --expected "$EXPECTED_ALEMBIC_FINGERPRINT"
+
+      - name: Compare the backend tree with the operator-verified live baseline
+        env:
+          PRODUCTION_BACKEND_COMMIT: ${{ vars.PRODUCTION_BACKEND_COMMIT }}
+        run: python -m tools.backend_release_guard
+
+      - name: Rebuild and test the frontend without the Netlify token
+        env:
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+        run: |
+          if [ "$VITE_API_URL" != 'https://prime-crm-cqi3.onrender.com' ]; then
+            echo '::error::VITE_API_URL is not the expected public API origin.'
+            exit 1
+          fi
+          docker build --target verified-static \
+            --build-arg "VITE_API_URL=$VITE_API_URL" \
+            --tag prime-crm-frontend:release-verify frontend
+          container="$(docker create prime-crm-frontend:release-verify)"
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
+          mkdir -p "$RUNNER_TEMP/frontend-release"
+          docker cp "$container:/app/dist/." "$RUNNER_TEMP/frontend-release/"
+
+      - name: Validate and package the static build locally
+        env:
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+        run: |
+          python -m tools.frontend_release \
+            --dist "$RUNNER_TEMP/frontend-release" \
+            --output "$RUNNER_TEMP/frontend-release.zip" \
+            --commit "$GITHUB_SHA" --api-origin "$VITE_API_URL"
+          python -m zipfile -t "$RUNNER_TEMP/frontend-release.zip"
+
+      - name: Publish one validated ZIP to Netlify
+        # Only this final step gets the Netlify secret. There is no retry. The
+        # module checks the GitHub branch head immediately before its one POST.
+        # A concurrent push in the remaining small window is still possible.
+        env:
+          NETLIFY_RELEASE_APPROVED: 'true'
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          GH_READ_TOKEN: ${{ github.token }}
+        run: python -m tools.netlify_release --archive "$RUNNER_TEMP/frontend-release.zip"
+
   netlify_privacy_diagnostic:
     name: Netlify · diagnostic anonyme de la réponse privée
     # No secrets or deployment environment: inspect two anonymous GETs only.
@@ -433,12 +529,14 @@ jobs:
     name: Render · demande de déploiement après approbation
     # Never deploy PRs, other branches, or forks. The environment additionally
     # requires an authorized human to approve before any step receives secrets.
-    # An explicit marker skips only the Render request, not the CI tests.
+    # A frontend release marker always excludes Render, even if the explicit
+    # skip marker was accidentally omitted. Neither marker skips the CI tests.
     if: >-
       github.event_name == 'push' &&
       github.repository == 'HamdiSouissi/PRIME-CRM' &&
       github.ref == 'refs/heads/arena/a18b007f-prime-crm' &&
-      !contains(github.event.head_commit.message, '[skip render]')
+      !contains(github.event.head_commit.message, '[skip render]') &&
+      !contains(github.event.head_commit.message, '[frontend release]')
     needs: [backend, frontend]
     runs-on: ubuntu-latest
     timeout-minutes: 5
