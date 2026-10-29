@@ -140,6 +140,23 @@ les détails d'erreur, désactive les proxys hérités et refuse les redirection
 l'API ; il ne prouve pas que le site fonctionnera après un futur déploiement.
 Inclure aussi `[skip render]` pour éviter toute demande Render lors de ce test.
 
+Le module `tools/netlify_release.py` prépare la future demande de publication,
+mais **aucun job ne l'appelle encore**. Ses tests utilisent exclusivement des
+réponses fictives. Il revalide le ZIP et son SHA déclaré, exige le projet et
+les builds attendus ainsi qu'un déploiement explicitement déverrouillé, puis
+prévoit au plus un POST ZIP. Une réponse `ready` ne suffit pas : le déploiement
+doit aussi être l'ID publié du site. Après un POST, toute erreur ou expiration
+de délai exige une vérification sur Netlify avant de réessayer. Une sonde
+privée après publication n'est qu'une observation ponctuelle. Ce module ne doit
+pas être lancé manuellement ; son éventuel job devra d'abord vérifier CI, HEAD,
+compatibilité backend, migrations et approbation humaine.
+
+Sur Netlify Free à crédits, une publication de production réussie consomme
+actuellement 15 crédits ; trafic et bande passante en consomment aussi. Les
+300 crédits mensuels sont partagés par l'équipe et, une fois épuisés, les sites
+sont suspendus jusqu'au prochain cycle. Vérifier le plan et le solde avant
+chaque publication ; ne pas activer de formule payante.
+
 Pour diagnostiquer une réponse privée inattendue depuis le runner GitHub, un
 commit `[netlify diagnose] [skip render]` lance un job distinct **sans secret** :
 deux GET anonymes de `/login`, sans suivre la redirection, avec deux

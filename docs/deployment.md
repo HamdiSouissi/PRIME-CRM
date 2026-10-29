@@ -108,7 +108,10 @@ après une migration expressément autorisée et réellement vérifiée ; ne pas
 modifier pour contourner un échec. La répétition ne publie rien sur Netlify.
 Une vérification protégée séparée peut lire le projet Netlify et sonder sa
 protection privée ; elle ne publie pas et ne modifie aucune configuration. Voir
-[ci.md](ci.md). Le futur déploiement frontend n'est pas encore implémenté.
+[ci.md](ci.md). Un module de publication est testé hors réseau, mais il n'est
+pas encore connecté au workflow : aucun job GitHub de publication frontend
+n'est actif à cette étape. Avant une future publication, contrôler le plan Free,
+le solde de crédits Netlify et la visibilité privée de production.
 
 ## Demande de déploiement backend
 
