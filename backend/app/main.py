@@ -142,7 +142,10 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         f"{settings.API_V1_STR}/users",
     }
     route_path = getattr(request.scope.get("route"), "path", "")
-    if request.method == "POST" and route_path in sensitive_paths:
+    if (
+        (request.method == "POST" and route_path in sensitive_paths)
+        or (request.method in {"POST", "PUT"} and route_path.startswith(f"{settings.API_V1_STR}/ai/"))
+    ):
         return JSONResponse(status_code=422, content={"detail": "Données invalides"})
     return await request_validation_exception_handler(request, exc)
 

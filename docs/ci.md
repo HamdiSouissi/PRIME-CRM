@@ -14,6 +14,11 @@ gratuits selon les conditions GitHub. Aucun service payant n'est créé.
 
 - **Backend, Python 3.11** : installation des dépendances, `pip check`, Ruff,
   tests pytest sur SQLite en mémoire et compilation des fichiers Python.
+- **Destinations IA** : allowlist, DNS fictif, adresses privées/mixtes,
+  rebinding, redirections, limites, anciens fournisseurs et masquage des
+  erreurs. Un serveur TLS réel sur boucle locale avec CA éphémère vérifie l'IP
+  choisie, `Host`, SNI, la confiance et le nom du certificat. Aucun fournisseur
+  IA réel ni secret réel n'est utilisé.
 - **Redis** : un conteneur Redis 7.2 jetable teste le cache chiffré, l'isolation
   des entreprises, l'invalidation, la limitation concurrente, les pannes et la
   vérification TLS locale. Les tests utilisent un préfixe aléatoire et ne

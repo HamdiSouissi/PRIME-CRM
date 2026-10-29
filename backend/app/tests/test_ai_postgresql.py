@@ -23,6 +23,7 @@ from app.database import get_db
 from app.main import app
 from app.models.company import Company
 from app.models.user import User
+from app.services.ai_service import egress
 from app.services.ai_service.credentials import CREDENTIAL_PREFIX, decrypt_credential
 
 
@@ -50,6 +51,13 @@ def test_ai_credentials_with_real_postgres_and_isolated_mock_provider(monkeypatc
     url = disposable_postgres_url()
     monkeypatch.setattr(settings, "SECRET_KEY", "fictitious-postgres-test-key-only-46289-enough-characters")
     monkeypatch.setattr(settings, "APP_ENV", "test")
+    monkeypatch.setattr(settings, "AI_ALLOWED_ORIGINS", "https://fake-provider.example.invalid")
+
+    async def fake_resolve(target):
+        assert target.hostname == "fake-provider.example.invalid"
+        return ["93.184.216.34"]
+
+    monkeypatch.setattr(egress, "_resolve_ipv4", fake_resolve)
     fake_key = "sk-fictitious-postgres-ai-test-key-12345"
     engine = create_engine(url)
     connection = engine.connect()

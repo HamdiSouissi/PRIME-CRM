@@ -33,10 +33,10 @@ services:
       FIRST_COMPANY_NAME: ${FIRST_COMPANY_NAME:-Prime Vision Solutions}
       ALLOW_PUBLIC_REGISTRATION: "false"
       CORS_ORIGINS: ${CORS_ORIGINS:-}
+      AI_ALLOWED_ORIGINS: ${AI_ALLOWED_ORIGINS:-}
+      AI_ALLOW_LOCAL_OLLAMA: "false"
     volumes:
       - backend_uploads:/app/uploads
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     networks:
       - prime-net
     healthcheck:

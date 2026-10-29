@@ -16,6 +16,7 @@ from app.main import app
 from app.models.ai_provider import AIProviderConfig
 from app.models.company import Company
 from app.models.user import User
+from app.services.ai_service import egress
 from app.services.ai_service.credentials import (
     AICredentialError,
     CREDENTIAL_PREFIX,
@@ -34,6 +35,13 @@ PROVIDER_URL = "https://provider.example.invalid/v1"
 def harness(monkeypatch):
     monkeypatch.setattr(settings, "SECRET_KEY", TEST_SIGNING_KEY)
     monkeypatch.setattr(settings, "APP_ENV", "test")
+    monkeypatch.setattr(settings, "AI_ALLOWED_ORIGINS", "https://provider.example.invalid,https://attacker.example.invalid,https://ollama.example.invalid:11434")
+
+    async def fake_resolve(target):
+        assert target.hostname in {"provider.example.invalid", "attacker.example.invalid", "ollama.example.invalid"}
+        return ["93.184.216.34"]
+
+    monkeypatch.setattr(egress, "_resolve_ipv4", fake_resolve)
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, autocommit=False, autoflush=False)
@@ -187,7 +195,9 @@ def test_provider_test_models_and_generate_use_decrypted_key_only_for_request(ha
     assert generated.status_code == 200 and generated.json()["content"] == "Réponse simulée"
     assert len(harness["outbound"]) == 3
     assert all(req.headers["authorization"] == f"Bearer {TEST_API_KEY}" for req in harness["outbound"])
-    assert all(str(req.url).startswith(PROVIDER_URL) for req in harness["outbound"])
+    assert all(req.url.host == "93.184.216.34" and req.url.path.startswith("/v1/") for req in harness["outbound"])
+    assert all(req.headers["host"] == "provider.example.invalid" for req in harness["outbound"])
+    assert all(req.extensions["sni_hostname"] == "provider.example.invalid" for req in harness["outbound"])
     assert TEST_API_KEY not in tested.text + models.text + generated.text + caplog.text
 
 
@@ -325,8 +335,8 @@ def test_unsaved_provider_test_uses_only_the_supplied_fictitious_credential(harn
 
 def test_ollama_test_models_and_generation_remain_available_with_mock_transport(harness):
     response = harness["client"].post("/api/v1/ai/providers", headers=harness["admin"], json={
-        "provider": "ollama", "name": "Local fake Ollama", "is_active": True,
-        "ollama_url": "http://ollama.example.invalid:11434", "ollama_model": "fake-local-model",
+        "provider": "ollama", "name": "Fake HTTPS Ollama", "is_active": True,
+        "ollama_url": "https://ollama.example.invalid:11434", "ollama_model": "fake-local-model",
     })
     assert response.status_code == 200
     provider_id = response.json()["id"]
@@ -359,3 +369,129 @@ def test_invalid_credential_rolls_back_new_provider_and_default_change(harness):
         providers = db.query(AIProviderConfig).all()
         assert len(providers) == 1 and providers[0].id == provider_id
         assert providers[0].is_default is True
+
+
+@pytest.mark.parametrize("legacy_url", [
+    "http://169.254.169.254/latest/meta-data",
+    "https://unapproved.example.invalid/v1",
+    "https://user:old-fake-password@provider.example.invalid/v1?secret=old-fake-token",
+])
+def test_legacy_openai_destinations_block_every_action_but_can_be_disabled_or_repaired(harness, monkeypatch, legacy_url):
+    provider_id = create_provider(harness).json()["id"]
+    with harness["factory"]() as db:
+        db.get(AIProviderConfig, provider_id).api_base_url = legacy_url
+        db.commit()
+    monkeypatch.setattr(settings, "APP_ENV", "production")
+    tested = harness["client"].post("/api/v1/ai/providers/test", headers=harness["admin"], json={"provider_id": provider_id})
+    models = harness["client"].get(f"/api/v1/ai/providers/{provider_id}/models", headers=harness["admin"])
+    generated = harness["client"].post("/api/v1/ai/generate", headers=harness["viewer"], json={"prompt": "Hi", "provider_id": provider_id})
+    assert tested.status_code == models.status_code == generated.status_code == 400
+    assert TEST_API_KEY not in tested.text + models.text + generated.text
+    assert legacy_url not in tested.text + models.text + generated.text
+    assert harness["outbound"] == []
+
+    disabled = harness["client"].put(f"/api/v1/ai/providers/{provider_id}", headers=harness["admin"], json={"is_active": False})
+    assert disabled.status_code == 200 and disabled.json()["is_active"] is False
+    denied_enable = harness["client"].put(f"/api/v1/ai/providers/{provider_id}", headers=harness["admin"], json={"is_active": True})
+    assert denied_enable.status_code == 400
+    repaired = harness["client"].put(f"/api/v1/ai/providers/{provider_id}", headers=harness["admin"], json={
+        "api_base_url": PROVIDER_URL, "api_key": OTHER_API_KEY, "is_active": True,
+    })
+    assert repaired.status_code == 200 and repaired.json()["is_active"] is True
+    assert TEST_API_KEY not in repaired.text and OTHER_API_KEY not in repaired.text
+    assert harness["outbound"] == []
+
+
+def test_legacy_ollama_destination_blocked_everywhere_but_can_be_disabled_or_repaired(harness, monkeypatch):
+    created = harness["client"].post("/api/v1/ai/providers", headers=harness["admin"], json={
+        "provider": "ollama", "name": "Legacy fake", "is_active": True,
+        "ollama_url": "https://ollama.example.invalid:11434", "ollama_model": "test-model",
+    })
+    assert created.status_code == 200
+    provider_id = created.json()["id"]
+    with harness["factory"]() as db:
+        db.get(AIProviderConfig, provider_id).ollama_url = "http://169.254.169.254:11434"
+        db.commit()
+    monkeypatch.setattr(settings, "APP_ENV", "production")
+    tested = harness["client"].post("/api/v1/ai/providers/test", headers=harness["admin"], json={"provider_id": provider_id})
+    models = harness["client"].get(f"/api/v1/ai/providers/{provider_id}/models", headers=harness["admin"])
+    generated = harness["client"].post("/api/v1/ai/generate", headers=harness["viewer"], json={"prompt": "Hi", "provider_id": provider_id})
+    assert tested.status_code == models.status_code == generated.status_code == 400
+    assert harness["outbound"] == []
+    disabled = harness["client"].put(f"/api/v1/ai/providers/{provider_id}", headers=harness["admin"], json={"is_active": False})
+    assert disabled.status_code == 200
+    assert harness["client"].put(f"/api/v1/ai/providers/{provider_id}", headers=harness["admin"], json={"is_active": True}).status_code == 400
+    repaired = harness["client"].put(f"/api/v1/ai/providers/{provider_id}", headers=harness["admin"], json={
+        "ollama_url": "https://ollama.example.invalid:11434", "is_active": True,
+    })
+    assert repaired.status_code == 200 and repaired.json()["is_active"] is True
+    assert harness["outbound"] == []
+
+
+def test_removing_origin_immediately_blocks_saved_provider_without_sending_key(harness, monkeypatch):
+    provider_id = create_provider(harness).json()["id"]
+    monkeypatch.setattr(settings, "AI_ALLOWED_ORIGINS", "")
+    tested = harness["client"].post("/api/v1/ai/providers/test", headers=harness["admin"], json={"provider_id": provider_id})
+    models = harness["client"].get(f"/api/v1/ai/providers/{provider_id}/models", headers=harness["admin"])
+    generated = harness["client"].post("/api/v1/ai/generate", headers=harness["viewer"], json={"prompt": "Hi", "provider_id": provider_id})
+    assert tested.status_code == models.status_code == generated.status_code == 400
+    assert TEST_API_KEY not in tested.text + models.text + generated.text
+    assert harness["outbound"] == []
+
+
+@pytest.mark.parametrize("addresses", [["127.0.0.1"], ["169.254.169.254"], ["93.184.216.34", "10.0.0.1"]])
+def test_allowed_origin_with_private_or_mixed_dns_is_blocked_in_every_api_path(harness, monkeypatch, addresses):
+    provider_id = create_provider(harness).json()["id"]
+
+    async def unsafe_dns(target):
+        return addresses
+
+    monkeypatch.setattr(egress, "_resolve_ipv4", unsafe_dns)
+    tested = harness["client"].post("/api/v1/ai/providers/test", headers=harness["admin"], json={"provider_id": provider_id})
+    models = harness["client"].get(f"/api/v1/ai/providers/{provider_id}/models", headers=harness["admin"])
+    generated = harness["client"].post("/api/v1/ai/generate", headers=harness["viewer"], json={"prompt": "Hi", "provider_id": provider_id})
+    assert tested.status_code == models.status_code == generated.status_code == 400
+    assert TEST_API_KEY not in tested.text + models.text + generated.text
+    assert all(address not in tested.text + models.text + generated.text for address in addresses)
+    assert harness["outbound"] == []
+
+
+def test_ai_request_validation_never_reflects_credentials(harness):
+    provider_id = create_provider(harness).json()["id"]
+    attempts = [
+        ("post", "/api/v1/ai/providers", {"provider": "openai_compat", "api_key": TEST_API_KEY}),
+        ("post", "/api/v1/ai/providers/test", {"provider_id": "not-an-integer", "api_key": TEST_API_KEY}),
+        ("put", f"/api/v1/ai/providers/{provider_id}", {"temperature": "not-a-number", "api_key": TEST_API_KEY}),
+        ("post", "/api/v1/ai/generate", {"prompt": {"secret": TEST_API_KEY}}),
+    ]
+    for method, path, payload in attempts:
+        response = getattr(harness["client"], method)(path, headers=harness["admin"], json=payload)
+        assert response.status_code == 422 and response.json() == {"detail": "Données invalides"}
+        assert TEST_API_KEY not in response.text
+    assert harness["outbound"] == []
+
+
+def test_development_local_ollama_works_only_after_explicit_opt_in(harness, monkeypatch):
+    local_url = "http://localhost:11434"
+    payload = {"provider": "ollama", "name": "Local test", "ollama_url": local_url, "is_active": True}
+    monkeypatch.setattr(settings, "APP_ENV", "development")
+    monkeypatch.setattr(settings, "AI_ALLOW_LOCAL_OLLAMA", False)
+    assert harness["client"].post("/api/v1/ai/providers", headers=harness["admin"], json=payload).status_code == 400
+    monkeypatch.setattr(settings, "AI_ALLOW_LOCAL_OLLAMA", True)
+
+    async def local_dns(target):
+        assert target.hostname == "localhost" and target.local_ollama
+        return ["127.0.0.1"]
+
+    monkeypatch.setattr(egress, "_resolve_ipv4", local_dns)
+    harness["handler"]["fn"] = lambda request: httpx.Response(200, json={"models": [{"name": "local-test"}]})
+    created = harness["client"].post("/api/v1/ai/providers", headers=harness["admin"], json=payload)
+    assert created.status_code == 200
+    tested = harness["client"].post("/api/v1/ai/providers/test", headers=harness["admin"], json={"provider_id": created.json()["id"]})
+    assert tested.status_code == 200 and tested.json()["models"] == ["local-test"]
+    request = harness["outbound"][0]
+    assert request.url.host == "127.0.0.1" and request.headers["host"] == "localhost:11434"
+    assert "authorization" not in request.headers
+    monkeypatch.setattr(settings, "APP_ENV", "production")
+    assert harness["client"].post("/api/v1/ai/providers/test", headers=harness["admin"], json={"provider_id": created.json()["id"]}).status_code == 400
+    assert len(harness["outbound"]) == 1

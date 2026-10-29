@@ -38,7 +38,7 @@ export function AIPage() {
   }
   const generate = async () => {
     setGenLoading(true); setResponse('')
-    try { const r=await api.post('/ai/generate', { prompt, feature:'email_draft' }); setResponse(r.data.content) } catch(e:any){ toast.error(e.response?.data?.detail||'Erreur'); setResponse('Erreur: vérifiez que Ollama est en cours (docker.host.internal) ou que la clé CodeCraftAPI est valide. L\'IA est facultative.') } finally { setGenLoading(false)}
+    try { const r=await api.post('/ai/generate', { prompt, feature:'email_draft' }); setResponse(r.data.content) } catch(e:any){ toast.error(e.response?.data?.detail||'Erreur'); setResponse('Erreur : vérifiez la destination autorisée et la configuration du fournisseur. L\'IA est facultative.') } finally { setGenLoading(false)}
   }
 
   return (
@@ -49,7 +49,7 @@ export function AIPage() {
         <Card className={health.active_providers ? 'border-green-200 bg-green-50 dark:bg-green-950/20' : 'border-amber-200 bg-amber-50 dark:bg-amber-950/20'}>
           <CardContent className="pt-4 flex items-center gap-3">
             {health.active_providers ? <CheckCircle2 className="w-5 h-5 text-green-600"/> : <XCircle className="w-5 h-5 text-amber-600"/>}
-            <div className="text-sm"><div className="font-medium">{health.active_providers ? `${health.active_providers} fournisseur(s) actif(s)` : 'Aucun fournisseur IA actif — Le CRM fonctionne sans IA'}</div><div className="text-muted-foreground">{health.message} • Configuration par défaut: modèle local Ollama (gratuit, open-weight)</div></div>
+            <div className="text-sm"><div className="font-medium">{health.active_providers ? `${health.active_providers} fournisseur(s) actif(s)` : 'Aucun fournisseur IA actif — Le CRM fonctionne sans IA'}</div><div className="text-muted-foreground">{health.message} • Aucune destination IA autorisée par défaut.</div></div>
           </CardContent>
         </Card>
       )}
@@ -71,7 +71,7 @@ export function AIPage() {
                 </div>
               </div>
             ))}
-            {providers.length===0 && <div className="text-sm text-muted-foreground py-4">Aucun fournisseur — Ajoutez Ollama (local, gratuit) ou CodeCraftAPI ci-dessous.</div>}
+            {providers.length===0 && <div className="text-sm text-muted-foreground py-4">Aucun fournisseur configuré. L'IA reste facultative.</div>}
             <div className="flex gap-2">
               <Button onClick={()=>setShowOllama(true)} className="flex-1">+ Ollama Local</Button>
               <Button onClick={()=>setShowCodecraft(true)} variant="outline" className="flex-1">+ CodeCraftAPI</Button>
@@ -91,13 +91,13 @@ export function AIPage() {
       </div>
 
       {showOllama && (
-        <Card><CardHeader><CardTitle className="text-sm">Configurer Ollama (local, gratuit)</CardTitle><p className="text-xs text-muted-foreground">Modèles open-weight à licence commerciale vérifiée. Ne télécharge pas automatiquement — Administrateur choisit et confirme.</p></CardHeader><CardContent>
+        <Card><CardHeader><CardTitle className="text-sm">Configurer Ollama</CardTitle><p className="text-xs text-muted-foreground">Modèles open-weight : vérifiez leur licence. Aucun téléchargement automatique ; l'administrateur choisit et confirme.</p></CardHeader><CardContent>
           <form onSubmit={createOllama} className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div><label className="text-xs">Nom</label><Input value={ollamaForm.name} onChange={e=>setOllamaForm({...ollamaForm, name:e.target.value})} required /></div>
             <div><label className="text-xs">URL Ollama * (depuis Docker: host.docker.internal:11434)</label><Input value={ollamaForm.ollama_url} onChange={e=>setOllamaForm({...ollamaForm, ollama_url:e.target.value})} required placeholder="http://host.docker.internal:11434" /></div>
             <div><label className="text-xs">Modèle installé</label><Input value={ollamaForm.ollama_model} onChange={e=>setOllamaForm({...ollamaForm, ollama_model:e.target.value})} placeholder="llama3.2, mistral..." /></div>
             <div className="flex items-center gap-2"><input type="checkbox" checked={ollamaForm.is_active} onChange={e=>setOllamaForm({...ollamaForm, is_active:e.target.checked})} /><label className="text-xs">Activé</label></div>
-            <div className="md:col-span-2 text-xs text-muted-foreground">En Docker, localhost du CRM ≠ localhost de la machine hôte. Utilisez <code>http://host.docker.internal:11434</code> pour joindre Ollama installé sur l'hôte. Voir guide installation Ollama ci-dessous.</div>
+            <div className="md:col-span-2 text-xs text-muted-foreground">Ollama HTTP local est désactivé par défaut et réservé au développement isolé avec opt-in explicite. En production, seule une origine HTTPS approuvée dans AI_ALLOWED_ORIGINS est autorisée. Voir docs/ollama.md.</div>
             <div className="flex gap-2 md:col-span-2"><Button type="submit">Enregistrer</Button><Button type="button" variant="outline" onClick={()=>setShowOllama(false)}>Annuler</Button></div>
           </form>
         </CardContent></Card>
@@ -110,7 +110,7 @@ export function AIPage() {
             <div><label className="text-xs">Clé API secrète *</label><Input type="password" value={codecraftForm.api_key} onChange={e=>setCodecraftForm({...codecraftForm, api_key:e.target.value})} required placeholder="sk-..." /></div>
             <div><label className="text-xs">Modèle</label><Input value={codecraftForm.model_id} onChange={e=>setCodecraftForm({...codecraftForm, model_id:e.target.value})} placeholder="gpt-4o-mini, claude-3..." /></div>
             <div className="flex items-center gap-2"><input type="checkbox" checked={codecraftForm.is_active} onChange={e=>setCodecraftForm({...codecraftForm, is_active:e.target.checked})} /><label className="text-xs">Activé</label></div>
-            <div className="md:col-span-2 text-xs text-muted-foreground">Découverte via GET /models et génération via POST /chat/completions (format OpenAI). La clé n'est jamais exposée côté frontend après enregistrement (affichage masqué).</div>
+            <div className="md:col-span-2 text-xs text-muted-foreground">L'origine HTTPS doit être approuvée dans AI_ALLOWED_ORIGINS avant usage. La clé est masquée après enregistrement. Vérifiez tarifs et quotas avant toute activation.</div>
             <div className="flex gap-2 md:col-span-2"><Button type="submit">Enregistrer</Button><Button type="button" variant="outline" onClick={()=>{ setCodecraftForm(form => ({ ...form, api_key: '' })); setShowCodecraft(false) }}>Annuler</Button></div>
           </form>
         </CardContent></Card>
@@ -121,7 +121,7 @@ export function AIPage() {
           <div>• Résumé fiche client & historique</div><div>• Rédaction relances & propositions</div><div>• Comptes rendus depuis notes</div><div>• Suggestions prochaine action</div><div>• Analyse gagné/perdu descriptive</div><div>• Recherche langage naturel (autorisée)</div><div>• Extraction structurée depuis texte</div><div>• Segmentation & priorisation prospects</div>
         </CardContent></Card>
         <Card><CardHeader><CardTitle className="text-sm flex items-center gap-2"><Target className="w-4 h-4"/>Contraintes</CardTitle></CardHeader><CardContent className="text-xs space-y-1 text-muted-foreground">
-          <div>• Gratuit par défaut (Ollama local)</div><div>• Pas de fournisseur payant obligatoire</div><div>• CRM opérationnel sans IA</div><div>• Pas d'invention de données</div><div>• Pas de modification sensible sans validation</div><div>• Pas d'envoi externe sans canal configuré</div><div>• Données minimales transmises</div><div>• Info utilisateur si envoi externe</div>
+          <div>• IA désactivée tant qu'aucune destination n'est autorisée</div><div>• Pas de fournisseur payant obligatoire</div><div>• CRM opérationnel sans IA</div><div>• Pas d'invention de données</div><div>• Pas de modification sensible sans validation</div><div>• Pas d'envoi externe sans canal configuré</div><div>• Données minimales transmises</div><div>• Info utilisateur si envoi externe</div>
         </CardContent></Card>
         <Card><CardHeader><CardTitle className="text-sm">Limites matérielles</CardTitle></CardHeader><CardContent className="text-xs space-y-1 text-muted-foreground">
           <div>Ollama local: 8 Go RAM recommandé pour llama3.2 (3B), 16 Go pour 7B.</div><div>Temps réponse: 2-10s selon modèle & machine.</div><div>Licences: vérifiez chaque modèle (ex: Llama 3.2, Mistral, Qwen autorisent usage commercial sous conditions).</div><div>CodeCraftAPI: consultez tarification & quotas directement sur codecraftapi.com (non supposé gratuit/illimité).</div>

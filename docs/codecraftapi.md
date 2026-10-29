@@ -1,16 +1,22 @@
-# CodeCraftAPI — Fournisseur compatible OpenAI
+# Fournisseur compatible OpenAI — exemple CodeCraftAPI
 
-> Les nouvelles clés API IA sont chiffrées dans la base ; les anciennes clés
-> en clair ne sont pas migrées automatiquement et doivent être remplacées.
-> La revue des destinations réseau IA n'est pas terminée : ne pas enregistrer
-> de clé réelle ni exposer le CRM avant cette revue. Les tarifs de ce service ne
-> sont pas garantis gratuits et doivent être vérifiés avant utilisation. Voir
-> [security.md](security.md) pour les limites et la gestion de `SECRET_KEY`.
+L'IA est facultative : aucune destination n'est autorisée par défaut. Les
+fournisseurs externes **ne sont pas nécessairement gratuits** ; n'activez pas
+un service avant d'avoir vérifié son tarif et ses quotas. Aucune création de
+compte ni clé réelle n'est nécessaire pour utiliser le CRM sans IA.
 
-1. Créer compte https://www.codecraftapi.com → clé API
-2. Prime CRM > Paramètres > IA > + CodeCraftAPI
-   - Base URL : https://www.codecraftapi.com/v1 (préremplie)
-   - Clé API (masquée)
-   - Modèle (ou Actualiser via GET /models)
-   - Tester connexion → GET /models avec Authorization Bearer
-3. Génération via POST /chat/completions format OpenAI. Ne jamais supposer gratuit/illimité : afficher uniquement infos accessibles. Choix par fonctionnalité via feature_mapping JSON.
+Si un fournisseur a été choisi et sa destination approuvée, l'opérateur doit
+ajouter son **origine HTTPS exacte**, sans chemin ni secret, à
+`AI_ALLOWED_ORIGINS` dans l'environnement du backend. Par exemple, l'URL
+`https://www.codecraftapi.com/v1` correspond à l'origine
+`https://www.codecraftapi.com`. Cet exemple ne garantit ni disponibilité, ni
+compatibilité, ni gratuité. Une liste vide bloque l'utilisation du fournisseur.
+Voir les contrôles et limites dans [security.md](security.md).
+
+Un administrateur peut ensuite enregistrer la base URL et la clé dans le CRM,
+tester `GET /models` et utiliser `POST /chat/completions`. Les nouvelles clés
+sont chiffrées dans la base et masquées dans l'interface. Les anciennes clés en
+clair ne sont pas migrées automatiquement et doivent être remplacées. Ne jamais
+placer une clé dans une URL, dans `AI_ALLOWED_ORIGINS`, dans Git, dans une
+variable `VITE_*`, ni dans les journaux ou une conversation. La rotation de
+`SECRET_KEY` rend les clés IA chiffrées illisibles : prévoir un plan de rotation.

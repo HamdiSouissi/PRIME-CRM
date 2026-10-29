@@ -16,6 +16,9 @@ os.environ["REDIS_URL"] = "redis://127.0.0.1:1/0"
 os.environ["SECRET_KEY"] = secrets.token_urlsafe(48)
 os.environ["ALLOW_PUBLIC_REGISTRATION"] = "true"
 os.environ["CORS_ORIGINS"] = "http://localhost:5173"
+# No real provider destinations or local Ollama exceptions from .env/the host.
+os.environ["AI_ALLOWED_ORIGINS"] = ""
+os.environ["AI_ALLOW_LOCAL_OLLAMA"] = "false"
 # Override any local .env bootstrap values instead of reading real ones.
 os.environ["FIRST_SUPERUSER_EMAIL"] = "unused@example.com"
 os.environ["FIRST_SUPERUSER_PASSWORD"] = "unused-test-password-4827"

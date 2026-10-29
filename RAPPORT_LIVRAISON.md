@@ -3,8 +3,8 @@
 > **Document historique, non validé pour la production.** Les affirmations et
 > résultats ci-dessous décrivent un ancien état du projet et ne constituent
 > pas une preuve de sécurité, de restauration ou de déploiement. L'inscription
-> publique et `seed-admin` ont été supprimés/désactivés ; les clés IA sont
-> stockées en clair, le service Redis hébergé reste à configurer et les sauvegardes
+> publique et `seed-admin` ont été supprimés/désactivés ; les anciennes clés IA
+> en clair doivent être remplacées, le service Redis hébergé reste à raccorder et les sauvegardes
 > à tester. Pour les instructions actuelles, suivre le `README.md`, `docs/security.md`,
 > `docs/ci.md` et `docs/deployment.md`. Ne pas exposer le CRM publiquement.
 

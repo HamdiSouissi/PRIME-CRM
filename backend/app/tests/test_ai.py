@@ -25,7 +25,11 @@ def get_token():
     resp = client.post("/api/v1/auth/register", json={"email": email, "password": "test-only-secure-password-123", "first_name": "AI", "last_name": "Test", "company_name": f"AI Corp {email}"})
     return resp.json()["access_token"]
 
-def test_ai_provider_crud():
+def test_ai_provider_crud(monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "APP_ENV", "development")
+    monkeypatch.setattr(settings, "AI_ALLOW_LOCAL_OLLAMA", True)
+    monkeypatch.setattr(settings, "AI_ALLOWED_ORIGINS", "https://www.codecraftapi.com")
     token = get_token()
     h = {"Authorization": f"Bearer {token}"}
     # create ollama provider

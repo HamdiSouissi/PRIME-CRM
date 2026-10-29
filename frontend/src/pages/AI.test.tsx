@@ -35,6 +35,16 @@ beforeEach(() => {
 afterEach(() => cleanup())
 
 describe('AI provider credentials', () => {
+  it('explains destination restrictions and the local development exception', async () => {
+    render(<AIPage />)
+    expect(await screen.findByText(/Aucune destination IA autorisée par défaut/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '+ Ollama Local' }))
+    expect(screen.getByText(/Ollama HTTP local est désactivé par défaut/).textContent).toContain('AI_ALLOWED_ORIGINS')
+    fireEvent.click(screen.getByRole('button', { name: 'Annuler' }))
+    fireEvent.click(screen.getByRole('button', { name: '+ CodeCraftAPI' }))
+    expect(screen.getByText(/L'origine HTTPS doit être approuvée/).textContent).toContain('tarifs et quotas')
+  })
+
   it('warns when a legacy or unreadable credential requires replacement', async () => {
     render(<AIPage />)
     const warning = await screen.findByRole('alert')

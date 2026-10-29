@@ -2,8 +2,8 @@
 
 > L'application n'est pas encore prête pour une exposition publique. Redis
 > est intégré techniquement ; son raccordement au déploiement reste à valider.
-> La protection par adresse IP, la revue des destinations IA, la récupération
-> des comptes et l'audit des dépendances restent notamment à traiter.
+> La protection par adresse IP, la défense réseau complémentaire pour l'IA,
+> la récupération des comptes et l'audit des dépendances restent à traiter.
 
 ## Configuration du backend
 
@@ -15,6 +15,8 @@
 | `REDIS_URL` | Obligatoire en production : URL TCP `rediss://` authentifiée, avec vérification du certificat et du nom d'hôte. Ne jamais la partager. |
 | `CORS_ORIGINS` | Origines exactes séparées par des virgules ; vide signifie aucune origine cross-origin. En production, seules les origines HTTPS sont acceptées, sans `*` ni chemin. |
 | `ALLOW_PUBLIC_REGISTRATION` | `false` par défaut. La valeur `true` est refusée en production. |
+| `AI_ALLOWED_ORIGINS` | Liste facultative d'origines IA HTTPS exactes, séparées par des virgules, sans chemin ni secret ; vide par défaut et recommandé si l'IA n'est pas utilisée. |
+| `AI_ALLOW_LOCAL_OLLAMA` | `false` par défaut ; `true` autorisé uniquement pour Ollama HTTP sur une machine de développement isolée, jamais en production. |
 | `FIRST_SUPERUSER_EMAIL` | Email utilisé uniquement pour créer le tout premier administrateur. |
 | `FIRST_SUPERUSER_PASSWORD` | Mot de passe initial : au moins 16 caractères et au plus 72 octets, sans espaces en début ou fin. |
 | `FIRST_COMPANY_NAME` | Nom de la première entreprise ; valeur par défaut non sensible. |
@@ -158,19 +160,78 @@ anciennes clés automatiquement.
 Les tests et la récupération de modèles sont réservés aux admins. Un test d'un
 fournisseur enregistré ne peut pas remplacer son URL ; changer l'URL d'un
 fournisseur ayant une clé impose de remplacer ou supprimer cette clé au même
-moment. Les URL OpenAI-compatibles exigent HTTPS en production et ne doivent
-pas contenir d'identifiants, de paramètres ni de fragment. Les réponses
-extérieures et exceptions ne sont plus reproduites dans les messages d'erreur.
+moment. Les réponses extérieures et exceptions ne sont pas reproduites dans
+les messages d'erreur. Les fournisseurs externes peuvent être payants : laissez
+l'IA désactivée si leur gratuité et leurs quotas ne sont pas établis.
 
-**Limite importante :** ces mesures ne constituent pas une protection SSRF
-complète. Les destinations réseau et les URL Ollama doivent encore être
-revues ; ne pas enregistrer de clé IA réelle ni exposer le CRM avant cette revue.
-Les fournisseurs IA externes peuvent être payants.
+## Destinations IA et réduction du risque SSRF
+
+**Aucune destination n'est autorisée par défaut.** Le CRM fonctionne sans IA.
+Avant d'utiliser un fournisseur distant, l'opérateur doit approuver son
+origine HTTPS exacte dans l'environnement **du backend**, pas dans le frontend.
+Par exemple, avec des noms fictifs :
+
+```dotenv
+AI_ALLOWED_ORIGINS=https://provider.example.invalid,https://second.example.invalid:8443
+AI_ALLOW_LOCAL_OLLAMA=false
+```
+
+Ces valeurs d'exemple ne désignent aucun fournisseur réel. Une origine contient
+seulement protocole, nom DNS et port éventuel : pas de chemin, joker, adresse IP,
+identifiant, requête ou fragment. Le chemin `/v1` se configure dans l'URL du
+fournisseur dans le CRM, pas dans l'allowlist. L'origine et le port doivent
+correspondre exactement ; `https://provider.example.invalid` et
+`https://provider.example.invalid:8443` sont différents. Sur Render, la variable non secrète sera définie dans **service →
+Environment → Add Environment Variable** au moment du déploiement. Une valeur
+invalide empêche le démarrage. Ne jamais y placer de clé, mot de passe ou URL
+avec identifiants, et ne pas enregistrer de secret dans Git ou `VITE_*`. Une
+variable d'environnement explicitement vide prime sur une ancienne valeur
+`.env` ; les variables booléennes, elles, doivent contenir `true` ou `false`.
+
+Pour chaque appel IA (test, modèles et génération), le backend revalide l'URL
+et l'allowlist, résout les enregistrements DNS **A** et rejette toute réponse
+contenant une adresse non publique, privée, de boucle locale, lien-local,
+multicast, réservée ou spéciale. Il se connecte directement à une IPv4
+validée et conserve le nom d'origine pour `Host`, SNI et la vérification TLS,
+avec les CA `certifi`. Il n'utilise ni proxy d'environnement, ni redirection,
+ni CA fournie par l'environnement. Les corps d'erreur sont ignorés ; une
+réponse réussie est limitée à 2 Mio, sans compression, avec un délai maximal
+pour la requête. Un fournisseur IPv6-only ou sans réponse A publique n'est pas
+pris en charge. Une adresse publique choisie parmi plusieurs est utilisée,
+sans nouvel essai sur les autres. Certains fournisseurs utilisant des
+redirections, compression, proxy obligatoire ou réponses plus grandes ne seront
+pas compatibles. Les adresses vérifiées ne prouvent pas la fiabilité
+commerciale d'un fournisseur. Les prompts et données associées lui sont
+transmis : ne pas y inclure de secrets et vérifier ses conditions de traitement.
+
+La seule exception HTTP concerne `localhost`, `127.0.0.1` et
+`host.docker.internal`, port `11434`, pour Ollama **uniquement si**
+`APP_ENV=development` et `AI_ALLOW_LOCAL_OLLAMA=true`. Elle doit être limitée
+à un poste de développement isolé ; les prompts y transitent sans TLS et un
+Ollama mal exposé peut être appelé par d'autres machines. Elle est interdite
+en production, où `true` bloque le démarrage. Voir [ollama.md](ollama.md).
+
+Les fournisseurs enregistrés avec une ancienne URL non conforme, ou dont
+l'origine a été retirée de l'allowlist, ne peuvent plus être testés ni utilisés.
+Un administrateur peut les désactiver, les supprimer ou corriger leur URL ;
+un changement d'URL exige aussi de remplacer ou supprimer la clé associée.
+Aucune destination n'est activée automatiquement et aucun fournisseur réel
+n'est contacté pendant les tests. Les tests locaux incluent un vrai serveur
+TLS sur boucle locale avec CA éphémère pour vérifier IP, SNI, `Host` et
+certificat, ainsi que le refus des redirections et des réponses DNS mixtes.
+
+**Défense en profondeur nécessaire :** ce filtrage applicatif réduit le risque
+SSRF mais ne remplace pas un pare-feu/une politique de sortie réseau bloquant
+les réseaux internes et métadonnées, ni un audit de l'infrastructure. Une IP
+publique peut correspondre à une route interne particulière ; un DNS ou un
+fournisseur autorisé peut être compromis. Un administrateur de l'environnement
+qui ajoute une origine autorise les envois vers celle-ci. Ne pas exposer le CRM
+avant traitement des autres limitations de sécurité et de sauvegarde.
 
 ## Limitations connues
 
-- Les destinations réseau et URL des fournisseurs IA nécessitent une revue
-  supplémentaire avant exposition, y compris contre les attaques SSRF.
+- Prévoir et tester une défense de sortie réseau indépendante du code pour
+  les adresses internes, les métadonnées et les routes particulières.
 - La limitation Redis couvre les deux routes de connexion et les changements
   de mot de passe par identifiant, pas par IP. Elle peut être utilisée pour bloquer temporairement un compte et
   ne protège pas seule contre une attaque distribuée ou l'épuisement des quotas.

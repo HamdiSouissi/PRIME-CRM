@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = ""
     ALLOW_PUBLIC_REGISTRATION: bool = False
 
+    # AI egress is disabled by default. Origins are explicit HTTPS origins,
+    # never URLs containing credentials or paths.
+    AI_ALLOWED_ORIGINS: str = ""
+    AI_ALLOW_LOCAL_OLLAMA: bool = False
+
     # Only used by the explicit first-administrator bootstrap command.
     FIRST_SUPERUSER_EMAIL: str = ""
     FIRST_SUPERUSER_PASSWORD: str = ""
@@ -36,7 +41,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         case_sensitive=True,
-        env_ignore_empty=True,
+        # An explicitly empty environment value must override any older .env
+        # value (notably, an empty AI allowlist must disable outbound AI).
+        env_ignore_empty=False,
         extra="ignore",
     )
 
@@ -114,6 +121,16 @@ class Settings(BaseSettings):
                 raise ValueError("REDIS_URL must be a valid Redis URL (authenticated TLS in production)") from None
         elif self.APP_ENV == "production":
             raise ValueError("REDIS_URL is required in production")
+
+        # Import here so Alembic can still read DATABASE_URL without requiring
+        # a complete runtime configuration or making any network request.
+        from .services.ai_service.provider_urls import AIProviderURLError, parse_allowed_origins
+        try:
+            parse_allowed_origins(self.AI_ALLOWED_ORIGINS)
+        except AIProviderURLError:
+            raise ValueError("AI_ALLOWED_ORIGINS must contain exact HTTPS origins without credentials or paths") from None
+        if self.AI_ALLOW_LOCAL_OLLAMA and self.APP_ENV != "development":
+            raise ValueError("AI_ALLOW_LOCAL_OLLAMA is permitted only in development")
 
         for origin in self.cors_origins_list:
             try:

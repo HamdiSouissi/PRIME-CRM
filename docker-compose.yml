@@ -55,7 +55,8 @@ services:
       FIRST_COMPANY_NAME: ${FIRST_COMPANY_NAME:-Prime Vision Solutions}
       ALLOW_PUBLIC_REGISTRATION: "false"
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost}
-      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      AI_ALLOWED_ORIGINS: ${AI_ALLOWED_ORIGINS:-}
+      AI_ALLOW_LOCAL_OLLAMA: ${AI_ALLOW_LOCAL_OLLAMA:-false}
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
     volumes:

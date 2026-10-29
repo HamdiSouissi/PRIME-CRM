@@ -2,8 +2,8 @@
 
 **Ne pas exposer publiquement le projet pour l'instant.** Redis est intégré,
 mais son raccordement au déploiement reste à valider. La protection par IP,
-la revue des destinations IA, la récupération d'un compte perdu, les sauvegardes
-et l'audit des dépendances restent à traiter. Le changement de mot de passe et
+une défense réseau complémentaire pour l'IA, la récupération d'un compte perdu,
+les sauvegardes et l'audit des dépendances restent à traiter. Le changement de mot de passe et
 la révocation globale des sessions sont intégrés, mais pas encore déployés.
 Aucun CD Render ou frontend n'est configuré à ce stade.
 
@@ -11,7 +11,10 @@ Le backend doit utiliser `APP_ENV=production`, une `SECRET_KEY` aléatoire et
 persistante, une URL PostgreSQL, une URL Redis TLS authentifiée et des origines
 HTTPS explicites. Les variables
 sensibles doivent être définies dans le gestionnaire de secrets de l'hébergeur,
-jamais dans Git. Voir [security.md](security.md).
+jamais dans Git. `AI_ALLOWED_ORIGINS` est vide par défaut : laisser l'IA sans
+fournisseur tant que la destination, son coût et la défense de sortie réseau
+n'ont pas été validés ; ne pas activer l'exception Ollama locale en production.
+Voir [security.md](security.md).
 
 Avant de lancer le serveur, exécuter les migrations Alembic, puis le bootstrap
 du premier administrateur lorsque la base est vide. La cible de la base doit

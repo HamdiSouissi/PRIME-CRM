@@ -17,6 +17,8 @@ fpdf2>=2.7.4
 openpyxl==3.1.5
 pandas==2.2.3
 httpx==0.27.2
+httpcore==1.0.9
+dnspython==2.9.0
 celery==5.4.0
 redis==5.2.1
 pytest==8.3.4

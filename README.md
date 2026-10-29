@@ -48,7 +48,7 @@
 
 ### Assistant IA (facultatif, isolé)
 - **Architecture d'abstraction** : chaque fournisseur a son adaptateur (OllamaProvider, OpenAICompatProvider) piloté par AIServiceManager
-- **Ollama local prioritaire** (gratuit, open-weight) : URL configurable `http://host.docker.internal:11434`, modèle sélectionnable, test connexion, découverte `/api/tags`
+- **Ollama optionnel** : modèle et URL configurables, test connexion et découverte `/api/tags`. HTTP local est désactivé par défaut et réservé au développement avec opt-in ; production exige une origine HTTPS approuvée.
 - **CodeCraftAPI** compatible OpenAI : section Paramètres > IA > Fournisseurs avec base URL préremplie `https://www.codecraftapi.com/v1`, clé masquée, récupération modèles GET /models, POST /chat/completions, sélection par fonctionnalité, limites dépenses si disponibles
 - Extensible à tout fournisseur OpenAI-compatible sans réécrire le CRM
 - Fonctionnalités : résumé client, historique, relances, brouillons propositions, comptes rendus, suggestions next actions, analyse gagné/perdu, recherche NL, aide rédaction, extraction JSON, segmentation
@@ -57,7 +57,7 @@
 ### Sécurité & Confidentialité
 - Auth JWT + bcrypt, rôles (admin/manager/commercial/viewer) vérifiés serveur, séparation données par entreprise ; changement de mot de passe et révocation globale des sessions côté serveur.
 - Limitation Redis par identifiant pour les connexions et les changements de mot de passe ; la protection par IP et les autres mesures de sécurité restent à traiter avant exposition publique.
-- Uploads limités à 10 Mo ; les nouvelles clés API IA sont chiffrées avant stockage. Les anciennes clés en clair doivent être remplacées ; la revue réseau IA, HTTPS, CORS et les sauvegardes restent à valider avant production.
+- Uploads limités à 10 Mo ; les nouvelles clés API IA sont chiffrées avant stockage. Les anciennes clés en clair doivent être remplacées ; la défense réseau IA, HTTPS, CORS et les sauvegardes restent à valider avant production.
 
 ### Administration
 - Entreprise (logo, couleurs, coordonnées, devise, locale, taxes), utilisateurs/rôles, étapes pipeline, catégories/sources, modèles devis, notifications, règles, fournisseurs IA, imports/exports, sauvegardes, logs, sécurité
@@ -183,24 +183,25 @@ Avant `app.bootstrap`, renseigner `SECRET_KEY`, `FIRST_SUPERUSER_EMAIL` et
 `FIRST_SUPERUSER_PASSWORD` dans le fichier ignoré `backend/.env`. Ne pas publier
 ce serveur de développement.
 
-### Configuration Ollama (IA locale gratuite)
+### Configuration Ollama (facultatif)
 
-1. Installer Ollama : https://ollama.com/download
-2. `ollama pull llama3.2` (ou `mistral`, `qwen2.5:3b`) — **sur confirmation admin uniquement**
-3. Vérifier : `ollama list` et `curl http://localhost:11434/api/tags`
-4. Dans Prime CRM : **Paramètres > Intelligence artificielle > + Ollama Local**
-   - URL : `http://host.docker.internal:11434` (depuis Docker) ou `http://localhost:11434` (dev local)
-   - Modèle : `llama3.2`
-   - **Tester la connexion** → doit afficher "Connexion OK, X modèles"
-5. Docs détaillée : `docs/ollama.md`
-
-> ⚠️ **Docker ≠ localhost** : en Docker, `localhost` côté conteneur ≠ machine hôte. Utilisez toujours `host.docker.internal` pour joindre Ollama depuis `docker-compose`.
+Aucune destination IA n'est autorisée par défaut et le CRM fonctionne sans IA.
+Pour un **poste de développement isolé uniquement**, installer Ollama puis choisir
+un modèle après vérification de sa licence. Configurer explicitement le backend
+avec `APP_ENV=development` et `AI_ALLOW_LOCAL_OLLAMA=true` dans l'environnement
+ou le fichier `.env` ignoré ; ne jamais utiliser cette exception en production.
+Dans **Paramètres > Intelligence artificielle > + Ollama Local**, l'URL peut être
+`http://localhost:11434` sur le même poste ou `http://host.docker.internal:11434`
+depuis Docker. `localhost` dans un conteneur désigne le conteneur lui-même.
+Cette connexion HTTP n'est pas chiffrée : voir `docs/ollama.md`.
 
 ### Fournisseurs IA externes
 
 Les nouvelles clés IA sont chiffrées avant stockage ; les anciennes clés en
-clair doivent être remplacées. Ne pas enregistrer de clé réelle avant la revue
-réseau IA. La gratuité d'un fournisseur externe n'est pas garantie ; voir
+clair doivent être remplacées. Pour chaque fournisseur externe, l'opérateur
+doit approuver son origine HTTPS exacte dans `AI_ALLOWED_ORIGINS` côté backend.
+Par défaut la liste est vide et l'IA reste inutilisable. La gratuité n'est pas
+garantie et une défense de sortie réseau reste nécessaire ; voir
 `docs/codecraftapi.md` et `docs/security.md`.
 
 ### Accès application
@@ -261,7 +262,7 @@ Détail : `docs/security.md`
 - JWT HS256, expiration 7j, bcrypt 4.x, CORS restrictif, headers sécurité
 - Permissions `require_admin`, `get_current_user` vérifiées à chaque requête, `company_id` injecté pour isolation
 - Tests d'isolation : `test_company_isolation` vérifie qu'une entreprise ne voit pas les données d'une autre
-- Les nouvelles clés API IA sont chiffrées avec une clé dérivée de `SECRET_KEY`. Les anciennes clés en clair doivent être remplacées et la revue réseau IA reste nécessaire avant utilisation réelle.
+- Les nouvelles clés API IA sont chiffrées avec une clé dérivée de `SECRET_KEY`. Les anciennes clés en clair doivent être remplacées ; aucune destination IA n'est autorisée par défaut et une défense réseau complémentaire reste nécessaire.
 - Ne jamais commiter `.env` réel (voir `.gitignore`), utiliser `.env.example`
 
 ---
@@ -318,8 +319,8 @@ valeurs résolues ; les secrets ne doivent jamais être partagés.
 ## ✅ Validation avant déploiement
 
 La CI vérifie le code, les migrations et Redis sur des services jetables. Il
-reste à raccorder le Redis hébergé, ajouter une protection par IP, revoir les
-destinations IA, prévoir la récupération des comptes, vérifier les sauvegardes
+reste à raccorder le Redis hébergé, ajouter une protection par IP et une défense
+de sortie réseau pour l'IA, prévoir la récupération des comptes, vérifier les sauvegardes
 et les dépendances, puis tester le cycle complet sur les services hébergés. Aucune exposition publique ne doit
 être déduite d'une CI verte.
 
@@ -339,7 +340,7 @@ Choix techniques justifiés dans `docs/architecture.md` (React/Vite pour réacti
 | Erreur | Cause | Solution |
 |--------|-------|----------|
 | `port is already allocated` | Port 80/5432 occupé | Changez `FRONTEND_PORT=8080` dans `.env`, ou `docker compose down` + libérez port |
-| `Ollama ConnectError` | URL localhost depuis Docker | Utilisez `http://host.docker.internal:11434` + `extra_hosts: host-gateway` |
+| Destination Ollama refusée | Exception locale désactivée ou environnement production | En développement isolé uniquement, activer `AI_ALLOW_LOCAL_OLLAMA` et suivre `docs/ollama.md` ; en production utiliser une origine HTTPS approuvée. |
 | `401 Unauthorized` | Token expiré | Reconnectez-vous (7j), videz localStorage si besoin |
 | `relation does not exist` | Migrations non appliquées | Vérifier la base puis exécuter `alembic upgrade head` avant le démarrage ; aucune création automatique de schéma |
 | `permission denied` | Rôle insuffisant | Connectez-vous avec le compte administrateur configuré |

@@ -5,7 +5,7 @@ from ...models.ai_provider import AIProviderConfig
 from .credentials import AICredentialError, decrypt_credential
 from .ollama import OllamaProvider
 from .openai_compat import OpenAICompatProvider
-from .provider_urls import AIProviderURLError
+from .provider_urls import AIProviderURLError, DEFAULT_OLLAMA_BASE_URL
 
 
 class AIServiceError(Exception):
@@ -62,7 +62,7 @@ class AIServiceManager:
     
     def _instantiate_provider(self, cfg: AIProviderConfig):
         if cfg.provider == "ollama":
-            return OllamaProvider(base_url=cfg.ollama_url or "http://host.docker.internal:11434", model=cfg.ollama_model or "llama3.2", timeout=cfg.timeout_seconds or 30)
+            return OllamaProvider(base_url=cfg.ollama_url or DEFAULT_OLLAMA_BASE_URL, model=cfg.ollama_model or "llama3.2", timeout=cfg.timeout_seconds or 30)
         else:
             # openai_compat includes codecraftapi. Only the bound, authenticated
             # credential reaches the provider; legacy plaintext is rejected.
