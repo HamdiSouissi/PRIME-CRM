@@ -23,6 +23,13 @@ Le job n'enregistre donc pas un faux statut de déploiement GitHub. En cas de
 réponse incertaine, vérifier Render avant de réessayer. L'empreinte ne vérifie
 pas le schéma réel de Neon ; voir [deployment.md](deployment.md).
 
+Pour tester un commit sans même demander de publication backend, ajouter
+`[skip render]` au message du dernier commit du push. Les tests s'exécutent
+normalement, mais le job Render est ignoré. Un push ultérieur sans ce marqueur
+peut inclure toutes les modifications cumulées ; l'approbation et les autres
+contrôles restent nécessaires. Ne pas confondre ce marqueur avec `[skip ci]`,
+qui ferait ignorer les tests par GitHub.
+
 Pour ce dépôt public, les runners GitHub standards utilisés par le workflow sont
 gratuits selon les conditions GitHub. Aucun service payant n'est créé.
 
@@ -65,6 +72,21 @@ gratuits selon les conditions GitHub. Aucun service payant n'est créé.
   `_redirects` et `_headers`. Node 20 est en fin de vie depuis le 30 avril 2026 ;
   Node 24 est utilisé pour la CI et le Dockerfile frontend. La CI ne publie pas
   son build sur Netlify.
+
+Sur un push de la branche de travail du dépôt indiqué, la variable GitHub de
+**dépôt** `VITE_API_URL` doit être exactement
+`https://prime-crm-cqi3.onrender.com`. Le workflow vérifie cette adresse avant
+le build et vérifie sa présence dans les fichiers JavaScript générés : une
+variable absente ou différente fait échouer le job. Cette valeur est publique :
+Vite l'intègre au code envoyé aux navigateurs. Ne jamais placer de secret dans
+une variable `VITE_*`. Pour changer de backend, revoir et modifier ensemble la
+variable et la valeur autorisée par le workflow.
+
+Pour ces pushs, un `build-info.json` indiquant le SHA de l'exécution est aussi
+créé dans le build de test. Le build reste sur le runner temporaire : il n'est
+ni conservé comme artefact GitHub ni publié sur Netlify. Le dépôt GitHub est
+public ; ne jamais y commiter de secret ni de données du CRM. Le site Netlify
+existant conserve sa visibilité privée.
 
 Les tests frontend couvrent l'authentification, la modification du mot de
 passe, la déconnexion, la révocation par l'admin et l'interface IA avec API

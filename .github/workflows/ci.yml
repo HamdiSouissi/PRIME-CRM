@@ -203,8 +203,42 @@ jobs:
       - name: Test frontend
         run: npm run test -- --run
 
+      - name: Validate the production API origin
+        # This public URL is compiled into the browser bundle. Pinning it here
+        # prevents a misconfigured variable from sending login details elsewhere.
+        if: github.event_name == 'push' && github.repository == 'HamdiSouissi/PRIME-CRM' && github.ref == 'refs/heads/arena/a18b007f-prime-crm'
+        env:
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+        run: |
+          if [ "$VITE_API_URL" != 'https://prime-crm-cqi3.onrender.com' ]; then
+            echo '::error::Set the repository variable VITE_API_URL to the expected public Render origin.'
+            exit 1
+          fi
+
       - name: Type-check and build frontend
+        env:
+          # Public configuration only; Vite exposes VITE_* values to browsers.
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
         run: npm run build
+
+      - name: Verify the API origin in the production build
+        if: github.event_name == 'push' && github.repository == 'HamdiSouissi/PRIME-CRM' && github.ref == 'refs/heads/arena/a18b007f-prime-crm'
+        env:
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+        run: |
+          if [ -z "$VITE_API_URL" ] || ! grep -lF -- "$VITE_API_URL" dist/assets/*.js >/dev/null; then
+            echo '::error::The expected API origin is missing from the built JavaScript.'
+            exit 1
+          fi
+
+      - name: Record the tested commit in the build
+        if: github.event_name == 'push' && github.repository == 'HamdiSouissi/PRIME-CRM' && github.ref == 'refs/heads/arena/a18b007f-prime-crm'
+        run: |
+          if ! [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo '::error::Invalid commit SHA; no frontend build information was created.'
+            exit 1
+          fi
+          printf '{"commit":"%s"}\n' "$GITHUB_SHA" > dist/build-info.json
 
       - name: Verify static hosting rules
         run: |
@@ -213,6 +247,8 @@ jobs:
           grep -Fx "  Content-Security-Policy: frame-ancestors 'none'" dist/_headers
           grep -Fx "  X-Content-Type-Options: nosniff" dist/_headers
           grep -Fx "  Referrer-Policy: strict-origin-when-cross-origin" dist/_headers
+          grep -Fx '/build-info.json' dist/_headers
+          grep -Fx '  Cache-Control: no-store' dist/_headers
 
       - name: Build frontend Docker image
         # Build only: the image stays on the runner and is never pushed.
@@ -226,7 +262,12 @@ jobs:
     name: Render · demande de déploiement après approbation
     # Never deploy PRs, other branches, or forks. The environment additionally
     # requires an authorized human to approve before any step receives secrets.
-    if: github.event_name == 'push' && github.repository == 'HamdiSouissi/PRIME-CRM' && github.ref == 'refs/heads/arena/a18b007f-prime-crm'
+    # An explicit marker skips only the Render request, not the CI tests.
+    if: >-
+      github.event_name == 'push' &&
+      github.repository == 'HamdiSouissi/PRIME-CRM' &&
+      github.ref == 'refs/heads/arena/a18b007f-prime-crm' &&
+      !contains(github.event.head_commit.message, '[skip render]')
     needs: [backend, frontend]
     runs-on: ubuntu-latest
     timeout-minutes: 5

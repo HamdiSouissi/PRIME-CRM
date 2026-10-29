@@ -3,3 +3,6 @@
   Content-Security-Policy: frame-ancestors 'none'
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
+
+/build-info.json
+  Cache-Control: no-store

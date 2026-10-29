@@ -108,7 +108,9 @@ Le job GitHub ne se connecte pas à Neon et n'exécute aucune migration.
 1. Un push sur `arena/a18b007f-prime-crm` dans le dépôt indiqué déclenche les
    tests. Ils utilisent des services PostgreSQL et Redis jetables uniquement.
    Les pull requests, forks et autres branches ne déclenchent pas de demande
-   de déploiement.
+   de déploiement. Si le message du dernier commit contient `[skip render]`,
+   les tests s'exécutent mais aucune demande Render n'est envoyée. Les
+   modifications ainsi non publiées peuvent être incluses dans un futur push.
 2. Si les deux jobs réussissent, un réviseur autorisé doit approuver le job
    `production`. Vérifier l'impact et les quotas avant d'approuver : le service
    redémarre et ses fichiers locaux éphémères, notamment les uploads, peuvent
