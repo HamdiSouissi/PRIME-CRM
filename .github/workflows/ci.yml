@@ -258,6 +258,87 @@ jobs:
         # Temporary container, no published ports and no application traffic.
         run: docker run --rm --add-host backend:127.0.0.1 prime-crm-frontend:ci nginx -t
 
+  frontend_release_preview:
+    name: Frontend · répétition protégée sans publication
+    # A deliberately marked push runs this one-time rehearsal. It never calls
+    # Netlify or receives a Netlify token, and publishes no build artifact.
+    if: >-
+      github.event_name == 'push' &&
+      github.repository == 'HamdiSouissi/PRIME-CRM' &&
+      github.ref == 'refs/heads/arena/a18b007f-prime-crm' &&
+      contains(github.event.head_commit.message, '[frontend preview]')
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: prime-crm-production-frontend-preview
+      cancel-in-progress: false
+    environment:
+      name: production-frontend
+      # This is a rehearsal, not a production deployment.
+      deployment: false
+    steps:
+      - name: Check out the tested commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.11'
+
+      - name: Ensure the checkout is the tested commit
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Compare the Alembic fingerprint with the frontend baseline
+        env:
+          EXPECTED_ALEMBIC_FINGERPRINT: ${{ vars.PRODUCTION_ALEMBIC_FINGERPRINT }}
+        run: |
+          if [ -z "$EXPECTED_ALEMBIC_FINGERPRINT" ]; then
+            echo '::error::PRODUCTION_ALEMBIC_FINGERPRINT is missing from the production-frontend configuration.'
+            exit 1
+          fi
+          python tools/migration_fingerprint.py verify --commit "$GITHUB_SHA" --expected "$EXPECTED_ALEMBIC_FINGERPRINT"
+
+      - name: Ensure the approved commit is still the branch head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          branch_head="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/arena/a18b007f-prime-crm" --jq '.object.sha')"
+          if [ "$branch_head" != "$GITHUB_SHA" ]; then
+            echo '::error::The branch changed after this run started; nothing was published.'
+            exit 1
+          fi
+
+      - name: Rebuild and test the frontend in an isolated container
+        env:
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+        run: |
+          if [ "$VITE_API_URL" != 'https://prime-crm-cqi3.onrender.com' ]; then
+            echo '::error::VITE_API_URL is not the expected public API origin.'
+            exit 1
+          fi
+          docker build --target verified-static \
+            --build-arg "VITE_API_URL=$VITE_API_URL" \
+            --tag prime-crm-frontend:release-verify frontend
+          container="$(docker create prime-crm-frontend:release-verify)"
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
+          mkdir -p "$RUNNER_TEMP/frontend-release"
+          docker cp "$container:/app/dist/." "$RUNNER_TEMP/frontend-release/"
+
+      - name: Validate and package the static build without publishing
+        env:
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+        run: |
+          python -m tools.frontend_release \
+            --dist "$RUNNER_TEMP/frontend-release" \
+            --output "$RUNNER_TEMP/frontend-release.zip" \
+            --commit "$GITHUB_SHA" --api-origin "$VITE_API_URL"
+          python -m zipfile -t "$RUNNER_TEMP/frontend-release.zip"
+          echo 'Rehearsal only: no request to Netlify was made.'
+
   request_render_deploy:
     name: Render · demande de déploiement après approbation
     # Never deploy PRs, other branches, or forks. The environment additionally

@@ -101,7 +101,11 @@ La référence doit être conservée séparément et ne doit être mise à jour
 qu'après validation explicite et migration réellement vérifiée ; ne jamais la
 changer simplement pour contourner un échec. Une empreinte différente exige
 une revue de la migration et une autorisation distincte avant toute écriture.
-Le job GitHub ne se connecte pas à Neon et n'exécute aucune migration.
+Le job GitHub ne se connecte pas à Neon et n'exécute aucune migration. La
+répétition frontend utilise une référence du même nom dans l'environnement
+`production-frontend`. Maintenir les deux références cohérentes uniquement
+après une migration expressément autorisée et réellement vérifiée ; ne pas les
+modifier pour contourner un échec. La répétition ne publie rien sur Netlify.
 
 ## Demande de déploiement backend
 

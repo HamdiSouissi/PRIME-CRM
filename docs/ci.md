@@ -88,6 +88,30 @@ ni conservé comme artefact GitHub ni publié sur Netlify. Le dépôt GitHub est
 public ; ne jamais y commiter de secret ni de données du CRM. Le site Netlify
 existant conserve sa visibilité privée.
 
+### Répétition frontend, sans publication
+
+Si le message du dernier commit contient `[frontend preview]`, le job
+`Frontend · répétition protégée sans publication` attend la réussite des deux
+jobs de CI et l'approbation de l'environnement `production-frontend`. Dans cet
+environnement, la variable `PRODUCTION_ALEMBIC_FINGERPRINT` doit correspondre
+à l'empreinte enregistrée après la dernière migration autorisée. Ce contrôle
+porte uniquement sur les fichiers Git ; il ne vérifie pas l'état réel de Neon.
+
+Après approbation, le job vérifie l'empreinte, le SHA et le HEAD de la branche,
+reconstruit le même commit dans le stage Docker `verified-static` avec l'URL
+publique attendue, puis vérifie l'archive ZIP avec
+`tools/frontend_release.py`. Le build est refait après la première CI, et non
+copié depuis elle : le commit est identique, mais les octets ne sont pas
+nécessairement identiques si une image de base ou une dépendance change. Le
+fichier `build-info.json` indique le SHA déclaré, sans prouver à lui seul
+l'intégrité des autres fichiers.
+
+Ce job n'utilise aucun jeton Netlify, n'envoie aucune requête à Netlify et ne
+crée aucun artefact GitHub. L'archive reste sur le runner temporaire. Pour
+répéter ce test sans demander de déploiement backend, inclure aussi
+`[skip render]` dans le message du dernier commit. Il ne s'agit pas d'une
+publication frontend : le workflow ne déploie pas encore le frontend.
+
 Les tests frontend couvrent l'authentification, la modification du mot de
 passe, la déconnexion, la révocation par l'admin et l'interface IA avec API
 simulée ; ils ne sont pas des tests de bout en bout. La plupart des tests
