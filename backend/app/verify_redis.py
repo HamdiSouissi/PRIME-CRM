@@ -234,11 +234,11 @@ def diagnose_tls(endpoint: tuple[str, int]) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     argv = [] if argv is None else argv
-    if argv not in ([], ["--tls-diagnostic"]):
+    if argv not in ([], ["--tls-diagnostic"], ["--tls-certificate-details"]):
         # Never echo command-line arguments, which could contain credentials.
-        print("Option non reconnue ; utilisez uniquement --tls-diagnostic ou aucune option.")
+        print("Option non reconnue ; utilisez --tls-diagnostic, --tls-certificate-details ou aucune option.")
         return 2
-    tls_only = argv == ["--tls-diagnostic"]
+    tls_only = bool(argv)
     if tls_only:
         print("Diagnostic TLS : aucun token, commande Redis ou authentification n'est nécessaire.")
         print("Copiez uniquement Endpoint depuis Upstash ; ajoutez :port s'il diffère de 6379.")
@@ -263,7 +263,14 @@ def main(argv: list[str] | None = None) -> int:
             print("Format invalide : fournissez uniquement l'Endpoint Upstash et, si besoin, son port.")
             return 1
         try:
+            if argv == ["--tls-certificate-details"]:
+                from .tls_diagnostic import diagnose_certificate_path
+
+                return diagnose_certificate_path(endpoint)
             return diagnose_tls(endpoint)
+        except ImportError:
+            print("RESULTAT_TLS=DEPENDANCE_INDISPONIBLE")
+            return 1
         except KeyboardInterrupt:
             print("RESULTAT_TLS=INTERROMPU")
             return 1

@@ -145,6 +145,22 @@ justifier la désactivation de TLS. Le mode diagnostic désactive aussi, dans so
 propre processus seulement, l'écriture éventuelle de secrets TLS par
 `SSLKEYLOGFILE`.
 
+Si le code indique un certificat expiré, un diagnostic plus détaillé est
+possible avec `python -m app.verify_redis --tls-certificate-details`. Il demande
+lui aussi uniquement l'Endpoint masqué. Il effectue deux négociations TLS
+**vérifiées** : l'une avec les certificats système, l'autre avec le bundle
+`certifi` seul s'il est disponible dans l'environnement Python. Cette
+comparaison ne modifie pas la configuration de l'application ; deux connexions
+successives peuvent également rencontrer des chemins réseau différents.
+
+Le diagnostic tente de relever uniquement les dates d'expiration des
+certificats présentés pendant la première négociation. Ces dates sont
+**non authentifiées si la validation échoue** : elles ne prouvent pas l'identité
+du serveur ni le certificat effectivement retenu par OpenSSL. Les noms,
+certificats complets, chemins et exceptions ne sont pas affichés. Sur certaines
+versions de Python, les dates peuvent être indisponibles. Aucun token, aucune
+commande Redis ni donnée CRM ne sont envoyés.
+
 ## Tests automatisés
 
 La CI démarre un Redis jetable dans le runner. Elle vérifie cache chiffré,
