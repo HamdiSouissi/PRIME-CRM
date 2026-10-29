@@ -122,8 +122,8 @@ def is_private_redirect(location: str) -> bool:
     )
 
 
-def check_private_login(opener) -> None:
-    """Probe only /login without any Netlify API credential or redirect following."""
+def get_private_login_response(opener) -> tuple[int, str]:
+    """Get /login without credentials, redirects, body logging, or retries."""
     request = Request(
         PUBLIC_LOGIN_URL,
         method="GET",
@@ -138,6 +138,14 @@ def check_private_login(opener) -> None:
         location = error.headers.get("Location", "") if error.headers is not None else ""
     except Exception:
         raise PreflightError("The Netlify privacy probe failed or timed out") from None
+    if type(status) is not int or not 100 <= status <= 599 or not isinstance(location, str):
+        raise PreflightError("The Netlify privacy probe returned an invalid response")
+    return status, location
+
+
+def check_private_login(opener) -> None:
+    """Require the expected redirect; an unrecognized response fails closed."""
+    status, location = get_private_login_response(opener)
     if status not in (301, 302, 303, 307, 308) or not is_private_redirect(location):
         raise PreflightError("The Netlify private login redirect was not confirmed")
 

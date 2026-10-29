@@ -339,6 +339,36 @@ jobs:
           python -m zipfile -t "$RUNNER_TEMP/frontend-release.zip"
           echo 'Rehearsal only: no request to Netlify was made.'
 
+  netlify_privacy_diagnostic:
+    name: Netlify · diagnostic anonyme de la réponse privée
+    # No secrets or deployment environment: inspect a single public GET only.
+    if: >-
+      github.event_name == 'push' &&
+      github.repository == 'HamdiSouissi/PRIME-CRM' &&
+      github.ref == 'refs/heads/arena/a18b007f-prime-crm' &&
+      contains(github.event.head_commit.message, '[netlify diagnose]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Check out the diagnostic code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.11'
+
+      - name: Inspect one anonymous response, without following redirects
+        id: probe
+        run: python -m tools.netlify_privacy_diagnostic >> "$GITHUB_OUTPUT"
+
+      - name: "Observation · ${{ steps.probe.outputs.observation }}"
+        run: |
+          echo 'Diagnostic only: no secret, deployment, or configuration change.'
+
   netlify_readonly_preview:
     name: Netlify · vérification en lecture seule sans publication
     # Explicit rehearsal only: the only Netlify requests are GETs. It never

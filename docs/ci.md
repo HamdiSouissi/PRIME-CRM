@@ -136,6 +136,14 @@ les détails d'erreur, désactive les proxys hérités et refuse les redirection
 l'API ; il ne prouve pas que le site fonctionnera après un futur déploiement.
 Inclure aussi `[skip render]` pour éviter toute demande Render lors de ce test.
 
+Pour diagnostiquer une réponse privée inattendue depuis le runner GitHub, un
+commit `[netlify diagnose] [skip render]` lance un job distinct **sans secret** :
+un seul GET anonyme de `/login`, sans suivre la redirection. Il affiche
+seulement le code HTTP et des indicateurs de correspondance ; ni URL de
+redirection, ni en-têtes, ni corps de réponse ne sont journalisés. Le succès du
+job indique que le diagnostic est terminé, pas que la confidentialité est
+validée. Ce job ne modifie rien et ne remplace pas le contrôle protégé.
+
 Les tests frontend couvrent l'authentification, la modification du mot de
 passe, la déconnexion, la révocation par l'admin et l'interface IA avec API
 simulée ; ils ne sont pas des tests de bout en bout. La plupart des tests
