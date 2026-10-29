@@ -78,6 +78,7 @@ jobs:
           python -m ruff check \
             tools/backend_release_guard.py tools/tests/test_backend_release_guard.py \
             tools/netlify_release.py tools/tests/test_netlify_release.py \
+            tools/netlify_lock_diagnostic.py tools/tests/test_netlify_lock_diagnostic.py \
             tools/tests/test_frontend_workflow_guard.py
 
       - name: Test backend (SQLite and disposable Redis)
@@ -519,6 +520,13 @@ jobs:
             echo '::error::The branch changed after this run started; no Netlify request was made.'
             exit 1
           fi
+
+      - name: Diagnose publishing flags without making changes
+        # Only authenticated GETs; report fixed categories, never IDs or bodies.
+        env:
+          NETLIFY_LOCK_DIAGNOSTIC_APPROVED: 'true'
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+        run: python -m tools.netlify_lock_diagnostic
 
       - name: Check the Netlify project and private login without publishing
         env:

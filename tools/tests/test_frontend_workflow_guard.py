@@ -61,6 +61,24 @@ class FrontendWorkflowGuardTests(unittest.TestCase):
         self.assertNotIn("continue-on-error", self.release)
         self.assertNotIn("upload-artifact", self.release)
 
+    def test_readonly_diagnostic_is_separate_and_protected(self) -> None:
+        readonly = job(self.source, "netlify_readonly_preview")
+        for text in (
+            "github.event_name == 'push'",
+            "github.repository == 'HamdiSouissi/PRIME-CRM'",
+            "github.ref == 'refs/heads/arena/a18b007f-prime-crm'",
+            "contains(github.event.head_commit.message, '[netlify preflight]')",
+            "needs: [backend, frontend]",
+            "name: production-frontend",
+            "deployment: false",
+            "NETLIFY_LOCK_DIAGNOSTIC_APPROVED: 'true'",
+            "python -m tools.netlify_lock_diagnostic",
+        ):
+            with self.subTest(text=text):
+                self.assertIn(text, readonly)
+        self.assertNotIn("python -m tools.netlify_release", readonly)
+        self.assertNotIn("continue-on-error", readonly)
+
     def test_workflow_approval_flag_matches_release_context(self) -> None:
         match = re.search(r"NETLIFY_RELEASE_APPROVED: '([^']+)'", self.release)
         self.assertIsNotNone(match)

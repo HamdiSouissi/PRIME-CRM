@@ -130,6 +130,15 @@ crée ni déploiement ni artefact. Cette sonde ponctuelle d'une seule route ne
 prouve pas la confidentialité de toutes les routes ni de futurs déploiements :
 confirmer aussi la visibilité de production dans le tableau de bord Netlify.
 
+Avant le précontrôle privé, un diagnostic supplémentaire lit le même projet
+et, si son identifiant est valide, le détail du déploiement déjà publié. Il
+n'effectue que des **GET** et affiche uniquement des catégories fixes :
+`true`, `false`, `absent`, `null`, `invalid` ou `unavailable`. Il ne divulgue
+ni identifiant de déploiement, ni réponse, ni jeton. Ces catégories servent à
+distinguer un blocage réel d'un champ manquant dans l'API ; `absent` ou `null`
+ne signifie pas que la publication est déverrouillée. L'approbation de ce job
+en lecture seule ne lance pas le job séparé de publication réelle.
+
 Le jeton personnel Netlify peut donner des droits sur toutes les ressources
 accessibles à son compte ; il doit être enregistré **uniquement** comme secret
 GitHub de l'environnement `production-frontend`, jamais dans le dépôt ou les
