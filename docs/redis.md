@@ -125,6 +125,26 @@ indisponible, le programme s'arrête avant la saisie. Videz ensuite le
 presse-papiers si nécessaire. Ce bloc n'a pas été exécuté sur Windows dans cet
 environnement.
 
+### Diagnostiquer une erreur TLS sans accès aux données
+
+En cas d'échec du certificat, lancer `python -m app.verify_redis --tls-diagnostic`
+depuis `backend` avec l'environnement Python du projet. À l'invite masquée,
+entrer uniquement l'**Endpoint** Upstash, sans URL ni token, et ajouter `:port`
+si le port affiché diffère de `6379`. Le mode effectue uniquement une
+négociation TLS avec vérification du certificat et du nom d'hôte. Il n'envoie
+**ni authentification, ni commande Redis**, n'accède pas à PostgreSQL et ne
+modifie aucune clé.
+
+La sortie indique le nombre de certificats CA chargés, la présence éventuelle
+des variables `SSL_CERT_FILE` et `SSL_CERT_DIR` (sans leurs valeurs), l'heure
+UTC et un code de vérification TLS. Aucun nom d'hôte, chemin, jeton, message
+brut d'exception ou détail de certificat n'est affiché. L'horloge, le magasin de
+confiance, une chaîne incomplète, une interception réseau ou un nom d'hôte
+incorrect peuvent expliquer un échec ; le code aide à distinguer ces cas sans
+justifier la désactivation de TLS. Le mode diagnostic désactive aussi, dans son
+propre processus seulement, l'écriture éventuelle de secrets TLS par
+`SSLKEYLOGFILE`.
+
 ## Tests automatisés
 
 La CI démarre un Redis jetable dans le runner. Elle vérifie cache chiffré,

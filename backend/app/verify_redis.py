@@ -4,9 +4,13 @@ The URL is requested with echo disabled and is never written to a file or log.
 Only two randomly namespaced keys with short TTLs are created and deleted.
 """
 
+from datetime import datetime, timezone
 import getpass
 import os
 import secrets
+import socket
+import ssl
+import sys
 import tempfile
 import warnings
 from urllib.parse import urlsplit
@@ -35,9 +39,33 @@ def is_upstash_tcp_url(value: str) -> bool:
         return False
 
 
+def parse_upstash_endpoint(value: str) -> tuple[str, int] | None:
+    """Accept only a hostname and optional port, never a URL or token."""
+    try:
+        parsed = urlsplit(f"rediss://{value}")
+        port = parsed.port
+        if (
+            not parsed.hostname
+            or not parsed.hostname.lower().endswith(".upstash.io")
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path
+            or parsed.query
+            or parsed.fragment
+            or any(character.isspace() for character in value)
+            or (port is not None and not 0 < port <= 65535)
+        ):
+            return None
+        return parsed.hostname, port or 6379
+    except ValueError:
+        return None
+
+
 def _make_test_store(url: str, secret: str, prefix: str):
     # Do not read a developer's .env or inherit their database/Redis URLs.
     # This is a short-lived process: it never opens a PostgreSQL connection.
+    # SSLKEYLOGFILE would log TLS session secrets; this process does not need it.
+    os.environ.pop("SSLKEYLOGFILE", None)
     os.environ.update({
         "APP_ENV": "test",
         "DATABASE_URL": "sqlite:///:memory:",
@@ -145,18 +173,102 @@ def safe_error_hint(error: Exception) -> str:
     return "erreur inattendue pendant la vérification."
 
 
-def main() -> int:
-    print("Test Redis dédié : aucun accès à PostgreSQL, à Neon ou au CRM.")
-    print("Copiez l'URL TCP rediss:// depuis Upstash et collez-la à l'invite masquée.")
+# OpenSSL verification codes, deliberately mapped to fixed strings. Never
+# display verify_message: it can contain the user's private Redis hostname.
+TLS_VERIFY_CATEGORIES = {
+    7: "SIGNATURE_NON_VERIFIEE",
+    9: "CERTIFICAT_PAS_ENCORE_VALIDE",
+    10: "CERTIFICAT_EXPIRE",
+    18: "CERTIFICAT_AUTOSIGNE_NON_RECONNU",
+    19: "AUTOSIGNE_DANS_LA_CHAINE",
+    20: "AUTORITE_OU_CHAINE_NON_RECONNUE",
+    21: "CHAINE_DE_CERTIFICATS_NON_VERIFIEE",
+    23: "CERTIFICAT_REVOQUE",
+    62: "NOM_HOTE_INCORRECT",
+    64: "ADRESSE_IP_INCORRECTE",
+}
+
+
+def diagnose_tls(endpoint: tuple[str, int]) -> int:
+    """Check TLS only: no Redis AUTH, commands, tokens, or database writes."""
+    os.environ.pop("SSLKEYLOGFILE", None)
+    print(f"HEURE_UTC={datetime.now(timezone.utc).isoformat(timespec='seconds')}")
+    print(f"SSL_CERT_FILE_DEFINI={'OUI' if os.environ.get('SSL_CERT_FILE') else 'NON'}")
+    print(f"SSL_CERT_DIR_DEFINI={'OUI' if os.environ.get('SSL_CERT_DIR') else 'NON'}")
+    try:
+        context = ssl.create_default_context()
+        # State the requirements explicitly; neither setting may be disabled.
+        context.check_hostname = True
+        context.verify_mode = ssl.CERT_REQUIRED
+        print(f"CERTIFICATS_CA_CHARGES={context.cert_store_stats()['x509_ca']}")
+        print("CERTIFICAT_REQUIS=OUI")
+        print("VERIFICATION_NOM_HOTE=OUI")
+    except Exception:
+        print("RESULTAT_TLS=CONTEXTE_TLS_IMPOSSIBLE")
+        return 1
+
+    try:
+        host, port = endpoint
+        with socket.create_connection((host, port), timeout=5) as connection:
+            with context.wrap_socket(connection, server_hostname=host):
+                # No Redis command or credential is ever sent on this socket.
+                print("RESULTAT_TLS=SUCCES")
+                return 0
+    except ssl.SSLCertVerificationError as error:
+        code = getattr(error, "verify_code", None)
+        code = code if type(code) is int and 0 <= code <= 9999 else None
+        print("RESULTAT_TLS=ECHEC_CERTIFICAT")
+        print(f"CODE_VERIFICATION_TLS={code if code is not None else 'INCONNU'}")
+        print(f"CATEGORIE_TLS={TLS_VERIFY_CATEGORIES.get(code, 'AUTRE_OU_INCONNUE')}")
+        return 1
+    except socket.gaierror:
+        print("RESULTAT_TLS=ECHEC_DNS")
+    except TimeoutError:
+        print("RESULTAT_TLS=DELAI_DEPASSE")
+    except OSError:
+        print("RESULTAT_TLS=ECHEC_RESEAU_OU_TLS")
+    except Exception:
+        print("RESULTAT_TLS=ERREUR_INATTENDUE")
+    return 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = [] if argv is None else argv
+    if argv not in ([], ["--tls-diagnostic"]):
+        # Never echo command-line arguments, which could contain credentials.
+        print("Option non reconnue ; utilisez uniquement --tls-diagnostic ou aucune option.")
+        return 2
+    tls_only = argv == ["--tls-diagnostic"]
+    if tls_only:
+        print("Diagnostic TLS : aucun token, commande Redis ou authentification n'est nécessaire.")
+        print("Copiez uniquement Endpoint depuis Upstash ; ajoutez :port s'il diffère de 6379.")
+        prompt = "Endpoint seul, sans URL ni token (saisie masquée) : "
+    else:
+        print("Test Redis dédié : aucun accès à PostgreSQL, à Neon ou au CRM.")
+        print("Copiez l'URL TCP rediss:// depuis Upstash et collez-la à l'invite masquée.")
+        prompt = "URL Redis TCP (saisie masquée) : "
     try:
         with warnings.catch_warnings():
             # Never fall back to an echoed prompt when there is no real terminal.
             warnings.simplefilter("error", getpass.GetPassWarning)
-            url = getpass.getpass("URL Redis TCP (saisie masquée) : ")
+            entered = getpass.getpass(prompt)
     except (getpass.GetPassWarning, EOFError, KeyboardInterrupt):
         print("Saisie masquée indisponible ou interrompue ; ouvrez un terminal PowerShell.")
         return 1
 
+    if tls_only:
+        endpoint = parse_upstash_endpoint(entered)
+        entered = ""
+        if endpoint is None:
+            print("Format invalide : fournissez uniquement l'Endpoint Upstash et, si besoin, son port.")
+            return 1
+        try:
+            return diagnose_tls(endpoint)
+        except KeyboardInterrupt:
+            print("RESULTAT_TLS=INTERROMPU")
+            return 1
+    url = entered
+    entered = ""
     if not is_upstash_tcp_url(url):
         print("Format invalide : utilisez l'URL TCP rediss:// authentifiée d'Upstash, sans paramètres.")
         return 1
@@ -192,4 +304,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))

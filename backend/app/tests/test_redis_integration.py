@@ -24,6 +24,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app import verify_redis
 from app.config import settings
 from app.database import Base, get_db
 from app.main import app
@@ -235,6 +236,41 @@ def _test_tls_material(tmp_path: Path) -> tuple[Path, Path, Path]:
     cert_file.write_bytes(leaf.public_bytes(serialization.Encoding.PEM))
     key_file.write_bytes(leaf_key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
     return ca_file, cert_file, key_file
+
+
+def test_tls_diagnostic_detects_real_trust_and_hostname_failures(redis_store, tmp_path, monkeypatch, capsys):
+    ca_file, cert_file, key_file = _test_tls_material(tmp_path)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(certfile=cert_file, keyfile=key_file)
+    proxy = _TlsProxy(("127.0.0.1", 0), _ProxyHandler)
+    proxy.tls_context = context
+    proxy.redis_port = urlsplit(os.environ["CI_TEST_REDIS_URL"]).port
+    thread = threading.Thread(target=proxy.serve_forever, daemon=True)
+    thread.start()
+    port = proxy.server_address[1]
+    try:
+        monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+        monkeypatch.delenv("SSL_CERT_DIR", raising=False)
+        assert verify_redis.diagnose_tls(("localhost", port)) == 1
+        untrusted = capsys.readouterr().out
+        assert "RESULTAT_TLS=ECHEC_CERTIFICAT" in untrusted
+        assert "fake-secret" not in untrusted and "localhost" not in untrusted
+
+        monkeypatch.setenv("SSL_CERT_FILE", str(ca_file))
+        assert verify_redis.diagnose_tls(("localhost", port)) == 0
+        trusted = capsys.readouterr().out
+        assert "RESULTAT_TLS=SUCCES" in trusted
+        assert "fake-secret" not in trusted and str(ca_file) not in trusted
+
+        assert verify_redis.diagnose_tls(("127.0.0.1", port)) == 1
+        mismatch = capsys.readouterr().out
+        assert "RESULTAT_TLS=ECHEC_CERTIFICAT" in mismatch
+        assert "CATEGORIE_TLS=ADRESSE_IP_INCORRECTE" in mismatch
+        assert "fake-secret" not in mismatch and "127.0.0.1" not in mismatch
+    finally:
+        proxy.shutdown()
+        proxy.server_close()
+        thread.join(timeout=3)
 
 
 def test_tls_verifies_the_server_hostname(redis_store, tmp_path, monkeypatch):
