@@ -71,7 +71,9 @@ jobs:
       - name: Test Windows controls and a real, fictitious local restore
         shell: pwsh
         run: |
-          python -m unittest -v tools.tests.test_backup_restore_windows
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $log = Join-Path $env:RUNNER_TEMP 'primecrm-windows-tests.log'
+          python -m unittest -v tools.tests.test_backup_restore_windows > $log 2>&1
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { Get-Content $log; exit $code }
           python -c "import tempfile; from pathlib import Path; from tools.backup_restore_windows import write_windows_root_certificates; p=Path(tempfile.gettempdir())/'primecrm-test-ca.pem'; write_windows_root_certificates(p); print('WINDOWS_CA_STORE_OK'); p.unlink()"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
