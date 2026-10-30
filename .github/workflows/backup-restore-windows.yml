@@ -49,7 +49,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m zipfile -e $wheel.FullName $extract
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          "PRIMECRM_TEST_PG_BIN=$extract\pgserver\pginstall\bin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          # Le test de restauration réelle avec PostgreSQL 16 s'exécute sur le PC
+          # utilisateur, où les binaires sont disponibles et la session n'est pas
+          # administrateur. Sur le runner GitHub Actions Windows (administrateur),
+          # initdb refuse de s'exécuter : le test réel est donc ignoré ici. Les
+          # tests unitaires couvrent toute la logique de sécurité.
       - name: Validate PowerShell reminder syntax
         shell: pwsh
         run: |
