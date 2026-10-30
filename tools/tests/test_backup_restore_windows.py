@@ -90,7 +90,10 @@ class CommandAndArchiveTests(unittest.TestCase):
                 path.write_bytes(b"archive fictive")
                 return subprocess.CompletedProcess(args, 0, "", "")
 
-            with mock.patch.object(backup, "command", side_effect=fake_command):
+            with (
+                mock.patch.object(backup, "command", side_effect=fake_command),
+                mock.patch.object(backup, "secure_directory"),
+            ):
                 archive, digest = backup.make_archive({"pg_dump": "pg_dump"}, {}, root)
             self.assertEqual(previous.read_bytes(), b"ancienne")
             self.assertNotEqual(archive.parent, root)
@@ -101,7 +104,11 @@ class CommandAndArchiveTests(unittest.TestCase):
             root = Path(folder)
             previous = root / "ancienne.dump"
             previous.write_bytes(b"ancienne")
-            with mock.patch.object(backup, "command", side_effect=backup.SafeFailure("erreur")), self.assertRaises(backup.SafeFailure):
+            with (
+                mock.patch.object(backup, "command", side_effect=backup.SafeFailure("erreur")),
+                mock.patch.object(backup, "secure_directory"),
+                self.assertRaises(backup.SafeFailure),
+            ):
                 backup.make_archive({"pg_dump": "pg_dump"}, {}, root)
             self.assertEqual([item.name for item in root.iterdir()], ["ancienne.dump"])
             self.assertEqual(previous.read_bytes(), b"ancienne")
@@ -145,6 +152,7 @@ class CommandAndArchiveTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             with (
                 mock.patch.object(backup, "command", side_effect=fake_command),
+                mock.patch.object(backup, "secure_directory"),
                 mock.patch.object(backup, "local_data_directory", return_value="/definitely/not/the/temp/folder"),
                 self.assertRaises(backup.SafeFailure),
             ):
