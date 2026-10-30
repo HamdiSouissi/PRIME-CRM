@@ -157,12 +157,15 @@ def failure_kind(output: str) -> str:
 
 
 def command(args: list[str], *, env: dict[str, str] | None = None,
-            timeout: int = 300, allow_failure: bool = False,
+            timeout: int = 300, allow_failure: bool = False, capture: bool = True,
             label: str = "commande") -> subprocess.CompletedProcess[str]:
+    # A daemon started by pg_ctl can inherit pipe handles on Windows and keep
+    # subprocess.run stuck even after pg_ctl exits. Never pipe server commands.
+    stream = subprocess.PIPE if capture else subprocess.DEVNULL
     try:
         result = subprocess.run(
             args, env=clean_environment() if env is None else env,
-            stdin=subprocess.DEVNULL, capture_output=True, text=True,
+            stdin=subprocess.DEVNULL, stdout=stream, stderr=stream, text=True,
             encoding="utf-8", errors="replace", timeout=timeout, check=False,
         )
     except subprocess.TimeoutExpired:
@@ -170,7 +173,7 @@ def command(args: list[str], *, env: dict[str, str] | None = None,
     except OSError:
         raise SafeFailure(f"{label} : exécutable inaccessible.") from None
     if result.returncode and not allow_failure:
-        raise SafeFailure(f"{label} : échec [{failure_kind(result.stderr)}].")
+        raise SafeFailure(f"{label} : échec [{failure_kind(result.stderr or '')}].")
     return result
 
 
@@ -306,9 +309,9 @@ def cleanup_local(tools: dict[str, str], runtime: Path, started: bool) -> bool:
     if started:
         try:
             command([tools["pg_ctl"], "--pgdata", str(data), "stop", "--mode=fast", "--wait", "--timeout=60"],
-                    allow_failure=True, timeout=75)
+                    allow_failure=True, capture=False, timeout=75)
             status = command([tools["pg_ctl"], "--pgdata", str(data), "status"],
-                             allow_failure=True, timeout=15)
+                             allow_failure=True, capture=False, timeout=15)
             if status.returncode != 3:
                 return False
         except SafeFailure:
@@ -334,7 +337,7 @@ def restore_archive(tools: dict[str, str], archive: Path, temporary_parent: Path
                 tools["initdb"], "--pgdata", str(data), "--username", LOCAL_ROLE,
                 "--auth=scram-sha-256", "--pwfile", str(password_file),
                 "--encoding=UTF8", "--no-locale",
-            ], label="Initialisation locale", timeout=180)
+            ], label="Initialisation locale", capture=False, timeout=180)
         finally:
             password_file.unlink(missing_ok=True)
         # Mark started before invoking pg_ctl: it might time out after starting.
@@ -343,7 +346,7 @@ def restore_archive(tools: dict[str, str], archive: Path, temporary_parent: Path
             tools["pg_ctl"], "--pgdata", str(data), "--log", str(runtime / "postgres.log"),
             "--options", f"-c listen_addresses=127.0.0.1 -c port={port}",
             "start", "--wait", "--timeout=60",
-        ], label="Démarrage PostgreSQL local", timeout=75)
+        ], label="Démarrage PostgreSQL local", capture=False, timeout=75)
         env = local_environment(port, password)
         if not same_directory(local_data_directory(tools, env), data):
             raise SafeFailure("La cible locale ne correspond pas au dossier jetable ; arrêt immédiat.")

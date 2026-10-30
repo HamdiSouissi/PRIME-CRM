@@ -71,6 +71,13 @@ class CommandAndArchiveTests(unittest.TestCase):
         self.assertNotIn("SECRET", str(failure.exception))
         self.assertNotIn("customer", str(failure.exception))
 
+    def test_server_commands_do_not_create_pipes_that_daemons_can_inherit(self):
+        fake = subprocess.CompletedProcess(["pg_ctl"], 0, None, None)
+        with mock.patch.object(backup.subprocess, "run", return_value=fake) as run:
+            backup.command(["pg_ctl", "start"], capture=False)
+        self.assertEqual(run.call_args.kwargs["stdout"], subprocess.DEVNULL)
+        self.assertEqual(run.call_args.kwargs["stderr"], subprocess.DEVNULL)
+
     def test_archive_created_in_new_folder_without_touching_previous_backups(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -188,12 +195,12 @@ class RealPostgreSQLTests(unittest.TestCase):
             backup.command([
                 tools["initdb"], "-D", str(data), "-U", backup.LOCAL_ROLE,
                 "--auth=trust", "--no-locale", "--encoding=UTF8",
-            ])
+            ], capture=False)
             try:
                 backup.command([
                     tools["pg_ctl"], "-D", str(data), "-l", str(root / "server.log"),
                     "-o", f"-c listen_addresses=127.0.0.1 -c port={port}", "start", "-w",
-                ])
+                ], capture=False)
                 env = backup.local_environment(port, "dummy-only")
                 sql = (
                     "CREATE TABLE public.alembic_version (version_num varchar(32)); "
@@ -211,7 +218,8 @@ class RealPostgreSQLTests(unittest.TestCase):
                 ], env=env, allow_failure=True)
                 self.assertNotEqual(write.returncode, 0)
             finally:
-                backup.command([tools["pg_ctl"], "-D", str(data), "stop", "-m", "fast", "-w"], allow_failure=True)
+                backup.command([tools["pg_ctl"], "-D", str(data), "stop", "-m", "fast", "-w"],
+                               allow_failure=True, capture=False)
             result = backup.restore_archive(tools, archive, root)
             self.assertEqual(result, backup.RestoreResult("20261029_02", 14, 1))
             self.assertEqual(list(root.glob("primecrm-restore-*")), [])
