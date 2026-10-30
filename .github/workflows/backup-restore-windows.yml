@@ -1,0 +1,73 @@
+name: Sauvegarde · tests Windows sans données réelles
+
+on:
+  push:
+    branches:
+      - arena/a18b007f-prime-crm
+    paths:
+      - 'tools/backup_restore_windows.py'
+      - 'tools/tests/test_backup_restore_windows.py'
+      - '.github/workflows/backup-restore-windows.yml'
+  pull_request:
+    paths:
+      - 'tools/backup_restore_windows.py'
+      - 'tools/tests/test_backup_restore_windows.py'
+      - '.github/workflows/backup-restore-windows.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  windows-fictitious-restore:
+    name: PostgreSQL 16 · restauration locale fictive sur Windows
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.11'
+      - name: Prepare pinned PostgreSQL 16 test binaries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $download = Join-Path $env:RUNNER_TEMP 'primecrm-pg-wheel'
+          $extract = Join-Path $env:RUNNER_TEMP 'primecrm-pg-test'
+          New-Item -ItemType Directory -Path $download, $extract | Out-Null
+          python -m pip download --no-deps --only-binary=:all: --dest $download pgserver==0.1.4
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $wheel = Get-ChildItem $download -Filter 'pgserver-0.1.4-cp311-cp311-win_amd64.whl'
+          if ($null -eq $wheel) { throw 'Expected PostgreSQL test wheel not found.' }
+          $actual = (Get-FileHash $wheel.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne 'fb755fe493c479fcad1a1e9923fcc1f09d15cd2fb168e563c003b29f14a80545') {
+            throw 'PostgreSQL test wheel hash does not match.'
+          }
+          $env:PRIMECRM_PG_EXTRACT = $extract
+          python -c "import os; from pathlib import Path; from tools.backup_restore_windows import secure_directory; secure_directory(Path(os.environ['PRIMECRM_PG_EXTRACT']))"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m zipfile -e $wheel.FullName $extract
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "PRIMECRM_TEST_PG_BIN=$extract\pgserver\pginstall\bin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Validate PowerShell reminder syntax
+        shell: pwsh
+        run: |
+          $registration = python -c "from tools.backup_restore_windows import reminder_registration_script; print(reminder_registration_script())"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $registration = $registration -join "`n"
+          $errors = $null
+          $tokens = $null
+          [void][System.Management.Automation.Language.Parser]::ParseInput($registration, [ref]$tokens, [ref]$errors)
+          if ($errors.Count -ne 0) { throw 'Registration PowerShell did not parse.' }
+          if ($registration -notmatch '-EncodedCommand ([A-Za-z0-9+/=]+)') { throw 'Reminder payload missing.' }
+          $notification = [System.Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($Matches[1]))
+          [void][System.Management.Automation.Language.Parser]::ParseInput($notification, [ref]$tokens, [ref]$errors)
+          if ($errors.Count -ne 0) { throw 'Notification PowerShell did not parse.' }
+      - name: Test Windows controls and a real, fictitious local restore
+        shell: pwsh
+        run: |
+          python -m unittest -v tools.tests.test_backup_restore_windows
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -c "import tempfile; from pathlib import Path; from tools.backup_restore_windows import write_windows_root_certificates; p=Path(tempfile.gettempdir())/'primecrm-test-ca.pem'; write_windows_root_certificates(p); print('WINDOWS_CA_STORE_OK'); p.unlink()"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

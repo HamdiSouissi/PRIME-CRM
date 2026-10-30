@@ -25,4 +25,9 @@ procédure ; aucune commande dédiée de révocation globale de la base n'est
 fournie actuellement. Ne pas changer `SECRET_KEY` à la légère : cela invalide
 les jetons mais rend aussi les clés IA chiffrées illisibles.
 
+Pour l'instance personnelle Windows, un outil prépare une sauvegarde et teste
+une restauration locale isolée ; ses essais automatisés utilisent uniquement des
+données fictives. La restauration de l'archive réelle n'est validée qu'après
+l'exécution réussie sur le PC. Voir [operations_zero_euro.md](operations_zero_euro.md).
+
 Ne commiter ni dump, ni fichier `.env`, ni URL contenant un mot de passe.
